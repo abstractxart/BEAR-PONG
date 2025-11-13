@@ -87,10 +87,22 @@ export class GameSession {
 
   /**
    * Update game physics (ball movement, collision detection)
-   * Uses swept collision detection to prevent tunneling
+   * GODMODE: Zero-tunneling collision with swept detection + safety nets
    */
   private updatePhysics() {
     if (!this.gameState.gameStarted) return;
+
+    // TIER 3: Velocity clamping - prevent ball from moving too fast per frame
+    const MAX_FRAME_DISTANCE = GAME_CONFIG.PADDLE_WIDTH * 0.75;
+    const frameDistance = Math.sqrt(
+      this.gameState.ballVelocityX * this.gameState.ballVelocityX +
+      this.gameState.ballVelocityY * this.gameState.ballVelocityY
+    );
+    if (frameDistance > MAX_FRAME_DISTANCE) {
+      const scale = MAX_FRAME_DISTANCE / frameDistance;
+      this.gameState.ballVelocityX *= scale;
+      this.gameState.ballVelocityY *= scale;
+    }
 
     // Store previous position for swept collision
     this.prevBallX = this.gameState.ballX;
@@ -112,7 +124,10 @@ export class GameSession {
       );
     }
 
-    // SWEPT COLLISION DETECTION for paddles (prevents tunneling)
+    // GODMODE TIER 1 + 2: Swept collision with padding zones
+    // TIER 2: Padding zones for forgiveness (4px)
+    const COLLISION_PADDING = 4;
+
     // Left paddle (player 1) - positioned at left edge
     const paddle1Left = 50;
     const paddle1Right = paddle1Left + GAME_CONFIG.PADDLE_WIDTH;
@@ -120,21 +135,24 @@ export class GameSession {
     const paddle1Top = this.gameState.paddle1Y - GAME_CONFIG.PADDLE_HEIGHT / 2;
     const paddle1Bottom = this.gameState.paddle1Y + GAME_CONFIG.PADDLE_HEIGHT / 2;
 
-    // Check if ball crossed the paddle's X boundary
+    // TIER 1: Check if ball crossed the paddle's X boundary (SWEPT DETECTION)
     if (
       this.gameState.ballVelocityX < 0 && // Moving left
       this.prevBallX - GAME_CONFIG.BALL_SIZE / 2 > paddle1Right && // Was to the right
-      this.gameState.ballX - GAME_CONFIG.BALL_SIZE / 2 <= paddle1Right // Now at or past paddle
+      this.gameState.ballX - GAME_CONFIG.BALL_SIZE / 2 <= paddle1Right + COLLISION_PADDING // Now at or past paddle (with padding)
     ) {
       // Calculate Y position when ball crosses paddle's X
       const t = (paddle1Right - (this.prevBallX - GAME_CONFIG.BALL_SIZE / 2)) / this.gameState.ballVelocityX;
       const crossY = this.prevBallY + (this.gameState.ballVelocityY * t);
 
-      // Check if Y position is within paddle bounds
-      if (crossY >= paddle1Top - GAME_CONFIG.BALL_SIZE / 2 && crossY <= paddle1Bottom + GAME_CONFIG.BALL_SIZE / 2) {
-        // HIT! Reflect the ball
+      // Check if Y position is within paddle bounds (with padding)
+      if (crossY >= paddle1Top - GAME_CONFIG.BALL_SIZE / 2 - COLLISION_PADDING &&
+          crossY <= paddle1Bottom + GAME_CONFIG.BALL_SIZE / 2 + COLLISION_PADDING) {
+        // HIT! TIER 7: Guaranteed bounce response
         this.gameState.ballVelocityX = Math.abs(this.gameState.ballVelocityX);
-        this.gameState.ballX = paddle1Right + GAME_CONFIG.BALL_SIZE / 2;
+
+        // TIER 7: Force ball OUTSIDE paddle bounds (safety margin)
+        this.gameState.ballX = paddle1Right + GAME_CONFIG.BALL_SIZE / 2 + 2;
 
         // Add spin based on where ball hit paddle
         const paddleCenter = (paddle1Top + paddle1Bottom) / 2;
@@ -153,21 +171,24 @@ export class GameSession {
     const paddle2Top = this.gameState.paddle2Y - GAME_CONFIG.PADDLE_HEIGHT / 2;
     const paddle2Bottom = this.gameState.paddle2Y + GAME_CONFIG.PADDLE_HEIGHT / 2;
 
-    // Check if ball crossed the paddle's X boundary
+    // TIER 1: Check if ball crossed the paddle's X boundary (SWEPT DETECTION)
     if (
       this.gameState.ballVelocityX > 0 && // Moving right
       this.prevBallX + GAME_CONFIG.BALL_SIZE / 2 < paddle2Left && // Was to the left
-      this.gameState.ballX + GAME_CONFIG.BALL_SIZE / 2 >= paddle2Left // Now at or past paddle
+      this.gameState.ballX + GAME_CONFIG.BALL_SIZE / 2 >= paddle2Left - COLLISION_PADDING // Now at or past paddle (with padding)
     ) {
       // Calculate Y position when ball crosses paddle's X
       const t = (paddle2Left - (this.prevBallX + GAME_CONFIG.BALL_SIZE / 2)) / this.gameState.ballVelocityX;
       const crossY = this.prevBallY + (this.gameState.ballVelocityY * t);
 
-      // Check if Y position is within paddle bounds
-      if (crossY >= paddle2Top - GAME_CONFIG.BALL_SIZE / 2 && crossY <= paddle2Bottom + GAME_CONFIG.BALL_SIZE / 2) {
-        // HIT! Reflect the ball
+      // Check if Y position is within paddle bounds (with padding)
+      if (crossY >= paddle2Top - GAME_CONFIG.BALL_SIZE / 2 - COLLISION_PADDING &&
+          crossY <= paddle2Bottom + GAME_CONFIG.BALL_SIZE / 2 + COLLISION_PADDING) {
+        // HIT! TIER 7: Guaranteed bounce response
         this.gameState.ballVelocityX = -Math.abs(this.gameState.ballVelocityX);
-        this.gameState.ballX = paddle2Left - GAME_CONFIG.BALL_SIZE / 2;
+
+        // TIER 7: Force ball OUTSIDE paddle bounds (safety margin)
+        this.gameState.ballX = paddle2Left - GAME_CONFIG.BALL_SIZE / 2 - 2;
 
         // Add spin based on where ball hit paddle
         const paddleCenter = (paddle2Top + paddle2Bottom) / 2;
