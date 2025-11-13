@@ -125,9 +125,10 @@ export class GameSession {
     }
 
     // GODMODE TIER 1 + 2: Swept collision with padding zones
-    // TIER 2: Padding zones for forgiveness (INCREASED for network lag compensation)
-    // With 50-100ms lag + mouse movement, paddle can move 15-20px between client->server
-    const COLLISION_PADDING = 18; // Aggressive padding to account for network lag
+    // TIER 2: EXTREME padding for network lag + fast mouse movements
+    // With 100ms lag @ 1200px/s mouse speed = 120px movement
+    // 50px padding ensures we catch even extreme cases
+    const COLLISION_PADDING = 50; // EXTREME padding - better too forgiving than missing hits!
 
     // Left paddle (player 1) - positioned at left edge
     const paddle1Left = 50;
@@ -147,9 +148,12 @@ export class GameSession {
       const crossY = this.prevBallY + (this.gameState.ballVelocityY * t);
 
       // Check if Y position is within paddle bounds (with padding)
-      if (crossY >= paddle1Top - GAME_CONFIG.BALL_SIZE / 2 - COLLISION_PADDING &&
-          crossY <= paddle1Bottom + GAME_CONFIG.BALL_SIZE / 2 + COLLISION_PADDING) {
+      const minY = paddle1Top - GAME_CONFIG.BALL_SIZE / 2 - COLLISION_PADDING;
+      const maxY = paddle1Bottom + GAME_CONFIG.BALL_SIZE / 2 + COLLISION_PADDING;
+
+      if (crossY >= minY && crossY <= maxY) {
         // HIT! TIER 7: Guaranteed bounce response
+        console.log(`[COLLISION] Left paddle HIT! crossY=${crossY.toFixed(1)}, paddleY=${this.gameState.paddle1Y.toFixed(1)}, range=${minY.toFixed(1)}-${maxY.toFixed(1)}`);
         this.gameState.ballVelocityX = Math.abs(this.gameState.ballVelocityX);
 
         // TIER 7: Force ball OUTSIDE paddle bounds (safety margin)
@@ -162,6 +166,9 @@ export class GameSession {
 
         // Increase ball speed slightly
         this.speedUpBall();
+      } else {
+        // MISS! Log why
+        console.log(`[COLLISION] Left paddle MISS! crossY=${crossY.toFixed(1)}, paddleY=${this.gameState.paddle1Y.toFixed(1)}, range=${minY.toFixed(1)}-${maxY.toFixed(1)}, diff=${crossY < minY ? (crossY - minY).toFixed(1) : (crossY - maxY).toFixed(1)}`);
       }
     }
 
@@ -183,9 +190,12 @@ export class GameSession {
       const crossY = this.prevBallY + (this.gameState.ballVelocityY * t);
 
       // Check if Y position is within paddle bounds (with padding)
-      if (crossY >= paddle2Top - GAME_CONFIG.BALL_SIZE / 2 - COLLISION_PADDING &&
-          crossY <= paddle2Bottom + GAME_CONFIG.BALL_SIZE / 2 + COLLISION_PADDING) {
+      const minY = paddle2Top - GAME_CONFIG.BALL_SIZE / 2 - COLLISION_PADDING;
+      const maxY = paddle2Bottom + GAME_CONFIG.BALL_SIZE / 2 + COLLISION_PADDING;
+
+      if (crossY >= minY && crossY <= maxY) {
         // HIT! TIER 7: Guaranteed bounce response
+        console.log(`[COLLISION] Right paddle HIT! crossY=${crossY.toFixed(1)}, paddleY=${this.gameState.paddle2Y.toFixed(1)}, range=${minY.toFixed(1)}-${maxY.toFixed(1)}`);
         this.gameState.ballVelocityX = -Math.abs(this.gameState.ballVelocityX);
 
         // TIER 7: Force ball OUTSIDE paddle bounds (safety margin)
@@ -198,6 +208,9 @@ export class GameSession {
 
         // Increase ball speed slightly
         this.speedUpBall();
+      } else {
+        // MISS! Log why
+        console.log(`[COLLISION] Right paddle MISS! crossY=${crossY.toFixed(1)}, paddleY=${this.gameState.paddle2Y.toFixed(1)}, range=${minY.toFixed(1)}-${maxY.toFixed(1)}, diff=${crossY < minY ? (crossY - minY).toFixed(1) : (crossY - maxY).toFixed(1)}`);
       }
     }
 
