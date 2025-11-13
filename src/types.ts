@@ -69,7 +69,7 @@ export const GAME_CONFIG = {
   BALL_SIZE: 20,
   PADDLE_SPEED: 10,
   INITIAL_BALL_SPEED: 6,
-  BALL_SPEED_INCREMENT: 0.3,
+  BALL_SPEED_INCREMENT: 0.6,  // 🔥 JUICE: DOUBLED for aggressive ramping (was 0.3)
   MAX_BALL_SPEED: 15,
   WINNING_SCORE: 3,
   TICK_RATE: 60, // Server updates per second

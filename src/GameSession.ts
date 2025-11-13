@@ -176,6 +176,12 @@ export class GameSession {
         const paddleCenter = (paddle1Top + paddle1Bottom) / 2;
         const hitPosition = (crossY - paddleCenter) / (GAME_CONFIG.PADDLE_HEIGHT / 2);
 
+        // 🔥 JUICE: PERFECT HIT ZONE (center 30% of paddle)
+        const isPerfectHit = Math.abs(hitPosition) <= 0.15;
+        if (isPerfectHit) {
+          console.log(`[PERFECT HIT!] Left paddle - Center shot! hitPosition=${hitPosition.toFixed(2)}`);
+        }
+
         // Spin strength scales with speed (gold/red = more horizontal bias)
         const spinStrength = currentSpeed >= 10 ? 2 : 3; // Less spin at high speeds
         this.gameState.ballVelocityY += hitPosition * spinStrength;
@@ -192,6 +198,12 @@ export class GameSession {
 
         // Increase ball speed slightly
         this.speedUpBall();
+
+        // 🔥 JUICE: PERFECT HIT = DOUBLE SPEED BONUS!
+        if (isPerfectHit) {
+          this.speedUpBall(); // BONUS speed increase!
+        }
+
         leftPaddleHit = true;
       } else {
         // MISS! Log why
@@ -217,6 +229,12 @@ export class GameSession {
       const paddleCenter = (paddle1Top + paddle1Bottom) / 2;
       const hitPosition = (this.gameState.ballY - paddleCenter) / (GAME_CONFIG.PADDLE_HEIGHT / 2);
 
+      // 🔥 JUICE: PERFECT HIT ZONE (center 30% of paddle)
+      const isPerfectHit = Math.abs(hitPosition) <= 0.15;
+      if (isPerfectHit) {
+        console.log(`[PERFECT HIT!] Left paddle FAILSAFE - Center shot! hitPosition=${hitPosition.toFixed(2)}`);
+      }
+
       const spinStrength = currentSpeed >= 10 ? 2 : 3;
       this.gameState.ballVelocityY += hitPosition * spinStrength;
 
@@ -230,6 +248,11 @@ export class GameSession {
       }
 
       this.speedUpBall();
+
+      // 🔥 JUICE: PERFECT HIT = DOUBLE SPEED BONUS!
+      if (isPerfectHit) {
+        this.speedUpBall(); // BONUS speed increase!
+      }
     }
 
     // Right paddle (player 2) - positioned at right edge
@@ -266,6 +289,12 @@ export class GameSession {
         const paddleCenter = (paddle2Top + paddle2Bottom) / 2;
         const hitPosition = (crossY - paddleCenter) / (GAME_CONFIG.PADDLE_HEIGHT / 2);
 
+        // 🔥 JUICE: PERFECT HIT ZONE (center 30% of paddle)
+        const isPerfectHit = Math.abs(hitPosition) <= 0.15;
+        if (isPerfectHit) {
+          console.log(`[PERFECT HIT!] Right paddle - Center shot! hitPosition=${hitPosition.toFixed(2)}`);
+        }
+
         // Spin strength scales with speed (gold/red = more horizontal bias)
         const spinStrength = currentSpeed >= 10 ? 2 : 3; // Less spin at high speeds
         this.gameState.ballVelocityY += hitPosition * spinStrength;
@@ -282,6 +311,12 @@ export class GameSession {
 
         // Increase ball speed slightly
         this.speedUpBall();
+
+        // 🔥 JUICE: PERFECT HIT = DOUBLE SPEED BONUS!
+        if (isPerfectHit) {
+          this.speedUpBall(); // BONUS speed increase!
+        }
+
         rightPaddleHit = true;
       } else {
         // MISS! Log why
@@ -307,6 +342,12 @@ export class GameSession {
       const paddleCenter = (paddle2Top + paddle2Bottom) / 2;
       const hitPosition = (this.gameState.ballY - paddleCenter) / (GAME_CONFIG.PADDLE_HEIGHT / 2);
 
+      // 🔥 JUICE: PERFECT HIT ZONE (center 30% of paddle)
+      const isPerfectHit = Math.abs(hitPosition) <= 0.15;
+      if (isPerfectHit) {
+        console.log(`[PERFECT HIT!] Right paddle FAILSAFE - Center shot! hitPosition=${hitPosition.toFixed(2)}`);
+      }
+
       const spinStrength = currentSpeed >= 10 ? 2 : 3;
       this.gameState.ballVelocityY += hitPosition * spinStrength;
 
@@ -320,6 +361,11 @@ export class GameSession {
       }
 
       this.speedUpBall();
+
+      // 🔥 JUICE: PERFECT HIT = DOUBLE SPEED BONUS!
+      if (isPerfectHit) {
+        this.speedUpBall(); // BONUS speed increase!
+      }
     }
 
     // Check for scoring (ball went off left or right edge)
