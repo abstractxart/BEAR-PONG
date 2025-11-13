@@ -3,11 +3,27 @@
  * These types are used by both server and client
  */
 
+// Cosmetic data structure
+export interface CosmeticData {
+  id: number;
+  name: string;
+  image_url: string;
+  is_animated?: boolean;
+  css_gradient?: string;
+}
+
+// Equipped cosmetics
+export interface EquippedCosmetics {
+  ring: CosmeticData | null;
+  banner: CosmeticData | null;
+}
+
 // Player data structure
 export interface PlayerData {
   wallet: string;
   displayName: string;
   avatarUrl?: string;
+  equippedCosmetics?: EquippedCosmetics;
 }
 
 // Game state sent from server to clients

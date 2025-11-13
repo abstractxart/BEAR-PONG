@@ -49,10 +49,10 @@ wss.on('connection', (ws: WebSocket) => {
 /**
  * Handle messages from clients
  */
-function handleClientMessage(ws: WebSocket, message: ClientMessage) {
+async function handleClientMessage(ws: WebSocket, message: ClientMessage) {
   switch (message.type) {
     case 'join_queue':
-      handleJoinQueue(ws, message.data);
+      await handleJoinQueue(ws, message.data);
       break;
 
     case 'paddle_move':
@@ -77,9 +77,29 @@ function handleClientMessage(ws: WebSocket, message: ClientMessage) {
 }
 
 /**
+ * Fetch equipped cosmetics from BEARpark API
+ */
+async function fetchEquippedCosmetics(walletAddress: string) {
+  try {
+    const response = await fetch(`https://bearpark.xyz/api/cosmetics/equipped/${walletAddress}`);
+    const data = await response.json() as any;
+
+    if (data.success) {
+      return data.equipped;
+    }
+
+    console.log(`⚠️ Failed to fetch cosmetics for ${walletAddress}`);
+    return { ring: null, banner: null };
+  } catch (error) {
+    console.error(`❌ Error fetching cosmetics for ${walletAddress}:`, error);
+    return { ring: null, banner: null };
+  }
+}
+
+/**
  * Handle player joining the matchmaking queue
  */
-function handleJoinQueue(ws: WebSocket, playerData: PlayerData) {
+async function handleJoinQueue(ws: WebSocket, playerData: PlayerData) {
   console.log(`🎯 Player joining queue: ${playerData.displayName} (${playerData.wallet})`);
 
   // Check if player is already in queue
@@ -94,6 +114,15 @@ function handleJoinQueue(ws: WebSocket, playerData: PlayerData) {
     console.log('⚠️ Player already in a game');
     return;
   }
+
+  // Fetch equipped cosmetics
+  const equippedCosmetics = await fetchEquippedCosmetics(playerData.wallet);
+  playerData.equippedCosmetics = equippedCosmetics;
+
+  console.log(`✨ Loaded cosmetics for ${playerData.displayName}:`, {
+    ring: equippedCosmetics.ring?.name || 'None',
+    banner: equippedCosmetics.banner?.name || 'None'
+  });
 
   // Add to queue
   matchmakingQueue.push({ ws, data: playerData });
