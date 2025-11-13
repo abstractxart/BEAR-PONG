@@ -12,6 +12,10 @@ export class GameSession {
   private countdown: number = GAME_CONFIG.COUNTDOWN_DURATION;
   private countdownInterval: NodeJS.Timeout | null = null;
 
+  // Track previous ball position for continuous collision detection
+  private prevBallX: number = 0;
+  private prevBallY: number = 0;
+
   constructor(
     player1: { ws: WebSocket; data: PlayerData },
     player2: { ws: WebSocket; data: PlayerData }
@@ -25,8 +29,8 @@ export class GameSession {
       ballY: GAME_CONFIG.CANVAS_HEIGHT / 2,
       ballVelocityX: GAME_CONFIG.INITIAL_BALL_SPEED * (Math.random() > 0.5 ? 1 : -1),
       ballVelocityY: GAME_CONFIG.INITIAL_BALL_SPEED * (Math.random() * 2 - 1),
-      paddle1Y: GAME_CONFIG.CANVAS_HEIGHT / 2 - GAME_CONFIG.PADDLE_HEIGHT / 2,
-      paddle2Y: GAME_CONFIG.CANVAS_HEIGHT / 2 - GAME_CONFIG.PADDLE_HEIGHT / 2,
+      paddle1Y: GAME_CONFIG.CANVAS_HEIGHT / 2 - GAME_CONFIG.PADDLE_HEIGHT / 2, // Center vertically
+      paddle2Y: GAME_CONFIG.CANVAS_HEIGHT / 2 - GAME_CONFIG.PADDLE_HEIGHT / 2, // Center vertically
       score1: 0,
       score2: 0,
       gameStarted: false,
@@ -83,15 +87,20 @@ export class GameSession {
 
   /**
    * Update game physics (ball movement, collision detection)
+   * Uses swept collision detection to prevent tunneling
    */
   private updatePhysics() {
     if (!this.gameState.gameStarted) return;
+
+    // Store previous position for swept collision
+    this.prevBallX = this.gameState.ballX;
+    this.prevBallY = this.gameState.ballY;
 
     // Move ball
     this.gameState.ballX += this.gameState.ballVelocityX;
     this.gameState.ballY += this.gameState.ballVelocityY;
 
-    // Ball collision with top/bottom walls
+    // Ball collision with top/bottom walls (bounce off)
     if (
       this.gameState.ballY <= GAME_CONFIG.BALL_SIZE / 2 ||
       this.gameState.ballY >= GAME_CONFIG.CANVAS_HEIGHT - GAME_CONFIG.BALL_SIZE / 2
@@ -103,35 +112,37 @@ export class GameSession {
       );
     }
 
-    // Ball collision with paddles
-    const ballLeft = this.gameState.ballX - GAME_CONFIG.BALL_SIZE / 2;
-    const ballRight = this.gameState.ballX + GAME_CONFIG.BALL_SIZE / 2;
-    const ballTop = this.gameState.ballY - GAME_CONFIG.BALL_SIZE / 2;
-    const ballBottom = this.gameState.ballY + GAME_CONFIG.BALL_SIZE / 2;
-
+    // SWEPT COLLISION DETECTION for paddles (prevents tunneling)
     // Left paddle (player 1) - positioned at left edge
     const paddle1Left = 50;
     const paddle1Right = paddle1Left + GAME_CONFIG.PADDLE_WIDTH;
     const paddle1Top = this.gameState.paddle1Y;
     const paddle1Bottom = this.gameState.paddle1Y + GAME_CONFIG.PADDLE_HEIGHT;
 
+    // Check if ball crossed the paddle's X boundary
     if (
-      ballLeft <= paddle1Right &&
-      ballRight >= paddle1Left &&
-      ballBottom >= paddle1Top &&
-      ballTop <= paddle1Bottom &&
-      this.gameState.ballVelocityX < 0
+      this.gameState.ballVelocityX < 0 && // Moving left
+      this.prevBallX - GAME_CONFIG.BALL_SIZE / 2 > paddle1Right && // Was to the right
+      this.gameState.ballX - GAME_CONFIG.BALL_SIZE / 2 <= paddle1Right // Now at or past paddle
     ) {
-      // Ball hit left paddle
-      this.gameState.ballVelocityX *= -1;
-      this.gameState.ballX = paddle1Right + GAME_CONFIG.BALL_SIZE / 2;
+      // Calculate Y position when ball crosses paddle's X
+      const t = (paddle1Right - (this.prevBallX - GAME_CONFIG.BALL_SIZE / 2)) / this.gameState.ballVelocityX;
+      const crossY = this.prevBallY + (this.gameState.ballVelocityY * t);
 
-      // Add spin based on where ball hit paddle
-      const hitPosition = (this.gameState.ballY - (paddle1Top + GAME_CONFIG.PADDLE_HEIGHT / 2)) / (GAME_CONFIG.PADDLE_HEIGHT / 2);
-      this.gameState.ballVelocityY += hitPosition * 3;
+      // Check if Y position is within paddle bounds
+      if (crossY >= paddle1Top - GAME_CONFIG.BALL_SIZE / 2 && crossY <= paddle1Bottom + GAME_CONFIG.BALL_SIZE / 2) {
+        // HIT! Reflect the ball
+        this.gameState.ballVelocityX = Math.abs(this.gameState.ballVelocityX);
+        this.gameState.ballX = paddle1Right + GAME_CONFIG.BALL_SIZE / 2;
 
-      // Increase ball speed slightly
-      this.speedUpBall();
+        // Add spin based on where ball hit paddle
+        const paddleCenter = (paddle1Top + paddle1Bottom) / 2;
+        const hitPosition = (crossY - paddleCenter) / (GAME_CONFIG.PADDLE_HEIGHT / 2);
+        this.gameState.ballVelocityY += hitPosition * 3;
+
+        // Increase ball speed slightly
+        this.speedUpBall();
+      }
     }
 
     // Right paddle (player 2) - positioned at right edge
@@ -140,32 +151,39 @@ export class GameSession {
     const paddle2Top = this.gameState.paddle2Y;
     const paddle2Bottom = this.gameState.paddle2Y + GAME_CONFIG.PADDLE_HEIGHT;
 
+    // Check if ball crossed the paddle's X boundary
     if (
-      ballRight >= paddle2Left &&
-      ballLeft <= paddle2Right &&
-      ballBottom >= paddle2Top &&
-      ballTop <= paddle2Bottom &&
-      this.gameState.ballVelocityX > 0
+      this.gameState.ballVelocityX > 0 && // Moving right
+      this.prevBallX + GAME_CONFIG.BALL_SIZE / 2 < paddle2Left && // Was to the left
+      this.gameState.ballX + GAME_CONFIG.BALL_SIZE / 2 >= paddle2Left // Now at or past paddle
     ) {
-      // Ball hit right paddle
-      this.gameState.ballVelocityX *= -1;
-      this.gameState.ballX = paddle2Left - GAME_CONFIG.BALL_SIZE / 2;
+      // Calculate Y position when ball crosses paddle's X
+      const t = (paddle2Left - (this.prevBallX + GAME_CONFIG.BALL_SIZE / 2)) / this.gameState.ballVelocityX;
+      const crossY = this.prevBallY + (this.gameState.ballVelocityY * t);
 
-      // Add spin based on where ball hit paddle
-      const hitPosition = (this.gameState.ballY - (paddle2Top + GAME_CONFIG.PADDLE_HEIGHT / 2)) / (GAME_CONFIG.PADDLE_HEIGHT / 2);
-      this.gameState.ballVelocityY += hitPosition * 3;
+      // Check if Y position is within paddle bounds
+      if (crossY >= paddle2Top - GAME_CONFIG.BALL_SIZE / 2 && crossY <= paddle2Bottom + GAME_CONFIG.BALL_SIZE / 2) {
+        // HIT! Reflect the ball
+        this.gameState.ballVelocityX = -Math.abs(this.gameState.ballVelocityX);
+        this.gameState.ballX = paddle2Left - GAME_CONFIG.BALL_SIZE / 2;
 
-      // Increase ball speed slightly
-      this.speedUpBall();
+        // Add spin based on where ball hit paddle
+        const paddleCenter = (paddle2Top + paddle2Bottom) / 2;
+        const hitPosition = (crossY - paddleCenter) / (GAME_CONFIG.PADDLE_HEIGHT / 2);
+        this.gameState.ballVelocityY += hitPosition * 3;
+
+        // Increase ball speed slightly
+        this.speedUpBall();
+      }
     }
 
     // Check for scoring (ball went off left or right edge)
     if (this.gameState.ballX <= 0) {
-      // Player 2 scored
+      // Player 2 scored (ball went off left)
       this.gameState.score2++;
       this.resetBall();
     } else if (this.gameState.ballX >= GAME_CONFIG.CANVAS_WIDTH) {
-      // Player 1 scored
+      // Player 1 scored (ball went off right)
       this.gameState.score1++;
       this.resetBall();
     }
@@ -199,6 +217,10 @@ export class GameSession {
   private resetBall() {
     this.gameState.ballX = GAME_CONFIG.CANVAS_WIDTH / 2;
     this.gameState.ballY = GAME_CONFIG.CANVAS_HEIGHT / 2;
+
+    // Reset previous position tracking
+    this.prevBallX = this.gameState.ballX;
+    this.prevBallY = this.gameState.ballY;
 
     // Random direction
     const angle = (Math.random() * Math.PI / 2) - Math.PI / 4; // -45 to 45 degrees
@@ -238,7 +260,7 @@ export class GameSession {
    * Update paddle position for a player
    */
   updatePaddlePosition(playerWs: WebSocket, y: number) {
-    // Clamp paddle position to canvas bounds
+    // Clamp paddle position to canvas bounds (vertical movement)
     const clampedY = Math.max(
       0,
       Math.min(GAME_CONFIG.CANVAS_HEIGHT - GAME_CONFIG.PADDLE_HEIGHT, y)
