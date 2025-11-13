@@ -189,6 +189,8 @@ function tryMatchmaking() {
     const player2 = matchmakingQueue.shift()!;
 
     console.log(`🎮 Match found! ${player1.data.displayName} vs ${player2.data.displayName}`);
+    console.log(`🖼️ Player 1 avatar: ${player1.data.avatarUrl?.substring(0, 50) || 'NONE'}`);
+    console.log(`🖼️ Player 2 avatar: ${player2.data.avatarUrl?.substring(0, 50) || 'NONE'}`);
 
     // Notify players of match
     sendToClient(player1.ws, {
