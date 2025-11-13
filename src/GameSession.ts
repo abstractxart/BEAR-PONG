@@ -124,11 +124,23 @@ export class GameSession {
       );
     }
 
-    // GODMODE TIER 1 + 2: Swept collision with padding zones
-    // TIER 2: EXTREME padding for network lag + fast mouse movements
-    // With 100ms lag @ 1200px/s mouse speed = 120px movement
-    // 50px padding ensures we catch even extreme cases
-    const COLLISION_PADDING = 50; // EXTREME padding - better too forgiving than missing hits!
+    // ULTRA GODMODE: Calculate current ball speed for dynamic collision padding
+    const currentSpeed = Math.sqrt(
+      this.gameState.ballVelocityX * this.gameState.ballVelocityX +
+      this.gameState.ballVelocityY * this.gameState.ballVelocityY
+    );
+
+    // ULTRA GODMODE: Dynamic collision padding that INCREASES with ball speed
+    // Base: 50px + (speed - 6) * 8px scaling
+    // At speed 6 (min): 50px padding
+    // At speed 10 (gold): 50 + (4 * 8) = 82px padding
+    // At speed 13 (red): 50 + (7 * 8) = 106px padding
+    // At speed 15 (max): 50 + (9 * 8) = 122px padding
+    const BASE_PADDING = 50;
+    const SPEED_SCALING = 8; // Extra padding per speed unit
+    const COLLISION_PADDING = BASE_PADDING + Math.max(0, (currentSpeed - GAME_CONFIG.INITIAL_BALL_SPEED) * SPEED_SCALING);
+
+    console.log(`[ULTRA GODMODE] Speed: ${currentSpeed.toFixed(1)}, Padding: ${COLLISION_PADDING.toFixed(0)}px`);
 
     // Left paddle (player 1) - positioned at left edge
     const paddle1Left = 50;
@@ -138,6 +150,7 @@ export class GameSession {
     const paddle1Bottom = this.gameState.paddle1Y + GAME_CONFIG.PADDLE_HEIGHT / 2;
 
     // TIER 1: Check if ball crossed the paddle's X boundary (SWEPT DETECTION)
+    let leftPaddleHit = false;
     if (
       this.gameState.ballVelocityX < 0 && // Moving left
       this.prevBallX - GAME_CONFIG.BALL_SIZE / 2 > paddle1Right && // Was to the right
@@ -166,10 +179,33 @@ export class GameSession {
 
         // Increase ball speed slightly
         this.speedUpBall();
+        leftPaddleHit = true;
       } else {
         // MISS! Log why
         console.log(`[COLLISION] Left paddle MISS! crossY=${crossY.toFixed(1)}, paddleY=${this.gameState.paddle1Y.toFixed(1)}, range=${minY.toFixed(1)}-${maxY.toFixed(1)}, diff=${crossY < minY ? (crossY - minY).toFixed(1) : (crossY - maxY).toFixed(1)}`);
       }
+    }
+
+    // ULTRA GODMODE FAILSAFE: Emergency collision check for left paddle
+    // If ball is ALREADY INSIDE/PAST paddle zone but within Y bounds, force bounce
+    if (
+      !leftPaddleHit && // Haven't already registered a hit
+      this.gameState.ballVelocityX < 0 && // Moving left
+      this.gameState.ballX - GAME_CONFIG.BALL_SIZE / 2 <= paddle1Right && // Past paddle X
+      this.gameState.ballX + GAME_CONFIG.BALL_SIZE / 2 >= paddle1Left && // But not completely past
+      this.gameState.ballY >= paddle1Top - COLLISION_PADDING && // Within paddle Y (with padding)
+      this.gameState.ballY <= paddle1Bottom + COLLISION_PADDING
+    ) {
+      console.log(`[EMERGENCY] Left paddle FAILSAFE TRIGGERED! ballX=${this.gameState.ballX.toFixed(1)}, ballY=${this.gameState.ballY.toFixed(1)}`);
+      this.gameState.ballVelocityX = Math.abs(this.gameState.ballVelocityX);
+      this.gameState.ballX = paddle1Right + GAME_CONFIG.BALL_SIZE / 2 + 2;
+
+      // Add spin
+      const paddleCenter = (paddle1Top + paddle1Bottom) / 2;
+      const hitPosition = (this.gameState.ballY - paddleCenter) / (GAME_CONFIG.PADDLE_HEIGHT / 2);
+      this.gameState.ballVelocityY += hitPosition * 3;
+
+      this.speedUpBall();
     }
 
     // Right paddle (player 2) - positioned at right edge
@@ -180,6 +216,7 @@ export class GameSession {
     const paddle2Bottom = this.gameState.paddle2Y + GAME_CONFIG.PADDLE_HEIGHT / 2;
 
     // TIER 1: Check if ball crossed the paddle's X boundary (SWEPT DETECTION)
+    let rightPaddleHit = false;
     if (
       this.gameState.ballVelocityX > 0 && // Moving right
       this.prevBallX + GAME_CONFIG.BALL_SIZE / 2 < paddle2Left && // Was to the left
@@ -208,10 +245,33 @@ export class GameSession {
 
         // Increase ball speed slightly
         this.speedUpBall();
+        rightPaddleHit = true;
       } else {
         // MISS! Log why
         console.log(`[COLLISION] Right paddle MISS! crossY=${crossY.toFixed(1)}, paddleY=${this.gameState.paddle2Y.toFixed(1)}, range=${minY.toFixed(1)}-${maxY.toFixed(1)}, diff=${crossY < minY ? (crossY - minY).toFixed(1) : (crossY - maxY).toFixed(1)}`);
       }
+    }
+
+    // ULTRA GODMODE FAILSAFE: Emergency collision check for right paddle
+    // If ball is ALREADY INSIDE/PAST paddle zone but within Y bounds, force bounce
+    if (
+      !rightPaddleHit && // Haven't already registered a hit
+      this.gameState.ballVelocityX > 0 && // Moving right
+      this.gameState.ballX + GAME_CONFIG.BALL_SIZE / 2 >= paddle2Left && // Past paddle X
+      this.gameState.ballX - GAME_CONFIG.BALL_SIZE / 2 <= paddle2Right && // But not completely past
+      this.gameState.ballY >= paddle2Top - COLLISION_PADDING && // Within paddle Y (with padding)
+      this.gameState.ballY <= paddle2Bottom + COLLISION_PADDING
+    ) {
+      console.log(`[EMERGENCY] Right paddle FAILSAFE TRIGGERED! ballX=${this.gameState.ballX.toFixed(1)}, ballY=${this.gameState.ballY.toFixed(1)}`);
+      this.gameState.ballVelocityX = -Math.abs(this.gameState.ballVelocityX);
+      this.gameState.ballX = paddle2Left - GAME_CONFIG.BALL_SIZE / 2 - 2;
+
+      // Add spin
+      const paddleCenter = (paddle2Top + paddle2Bottom) / 2;
+      const hitPosition = (this.gameState.ballY - paddleCenter) / (GAME_CONFIG.PADDLE_HEIGHT / 2);
+      this.gameState.ballVelocityY += hitPosition * 3;
+
+      this.speedUpBall();
     }
 
     // Check for scoring (ball went off left or right edge)
