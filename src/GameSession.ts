@@ -125,8 +125,9 @@ export class GameSession {
     }
 
     // GODMODE TIER 1 + 2: Swept collision with padding zones
-    // TIER 2: Padding zones for forgiveness (4px)
-    const COLLISION_PADDING = 4;
+    // TIER 2: Padding zones for forgiveness (INCREASED for network lag compensation)
+    // With 50-100ms lag + mouse movement, paddle can move 15-20px between client->server
+    const COLLISION_PADDING = 18; // Aggressive padding to account for network lag
 
     // Left paddle (player 1) - positioned at left edge
     const paddle1Left = 50;
