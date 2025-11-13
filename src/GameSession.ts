@@ -172,10 +172,23 @@ export class GameSession {
         // TIER 7: Force ball OUTSIDE paddle bounds (safety margin)
         this.gameState.ballX = paddle1Right + GAME_CONFIG.BALL_SIZE / 2 + 2;
 
-        // Add spin based on where ball hit paddle
+        // GODMODE FUN: Add spin based on where ball hit paddle (CLAMPED for fun)
         const paddleCenter = (paddle1Top + paddle1Bottom) / 2;
         const hitPosition = (crossY - paddleCenter) / (GAME_CONFIG.PADDLE_HEIGHT / 2);
-        this.gameState.ballVelocityY += hitPosition * 3;
+
+        // Spin strength scales with speed (gold/red = more horizontal bias)
+        const spinStrength = currentSpeed >= 10 ? 2 : 3; // Less spin at high speeds
+        this.gameState.ballVelocityY += hitPosition * spinStrength;
+
+        // GODMODE FUN: Limit vertical velocity to prevent boring up/down bouncing
+        const MAX_Y_VELOCITY = currentSpeed >= 10 ? 4 : 6; // Gold/red: even more horizontal
+        this.gameState.ballVelocityY = Math.max(-MAX_Y_VELOCITY, Math.min(MAX_Y_VELOCITY, this.gameState.ballVelocityY));
+
+        // GODMODE FUN: Ensure minimum horizontal velocity (especially at high speeds)
+        const MIN_X_VELOCITY = currentSpeed >= 10 ? currentSpeed * 0.75 : currentSpeed * 0.5;
+        if (Math.abs(this.gameState.ballVelocityX) < MIN_X_VELOCITY) {
+          this.gameState.ballVelocityX = Math.sign(this.gameState.ballVelocityX) * MIN_X_VELOCITY;
+        }
 
         // Increase ball speed slightly
         this.speedUpBall();
@@ -200,10 +213,21 @@ export class GameSession {
       this.gameState.ballVelocityX = Math.abs(this.gameState.ballVelocityX);
       this.gameState.ballX = paddle1Right + GAME_CONFIG.BALL_SIZE / 2 + 2;
 
-      // Add spin
+      // GODMODE FUN: Add spin (emergency bounce)
       const paddleCenter = (paddle1Top + paddle1Bottom) / 2;
       const hitPosition = (this.gameState.ballY - paddleCenter) / (GAME_CONFIG.PADDLE_HEIGHT / 2);
-      this.gameState.ballVelocityY += hitPosition * 3;
+
+      const spinStrength = currentSpeed >= 10 ? 2 : 3;
+      this.gameState.ballVelocityY += hitPosition * spinStrength;
+
+      // GODMODE FUN: Clamp Y velocity and ensure horizontal bias
+      const MAX_Y_VELOCITY = currentSpeed >= 10 ? 4 : 6;
+      this.gameState.ballVelocityY = Math.max(-MAX_Y_VELOCITY, Math.min(MAX_Y_VELOCITY, this.gameState.ballVelocityY));
+
+      const MIN_X_VELOCITY = currentSpeed >= 10 ? currentSpeed * 0.75 : currentSpeed * 0.5;
+      if (Math.abs(this.gameState.ballVelocityX) < MIN_X_VELOCITY) {
+        this.gameState.ballVelocityX = Math.sign(this.gameState.ballVelocityX) * MIN_X_VELOCITY;
+      }
 
       this.speedUpBall();
     }
@@ -238,10 +262,23 @@ export class GameSession {
         // TIER 7: Force ball OUTSIDE paddle bounds (safety margin)
         this.gameState.ballX = paddle2Left - GAME_CONFIG.BALL_SIZE / 2 - 2;
 
-        // Add spin based on where ball hit paddle
+        // GODMODE FUN: Add spin based on where ball hit paddle (CLAMPED for fun)
         const paddleCenter = (paddle2Top + paddle2Bottom) / 2;
         const hitPosition = (crossY - paddleCenter) / (GAME_CONFIG.PADDLE_HEIGHT / 2);
-        this.gameState.ballVelocityY += hitPosition * 3;
+
+        // Spin strength scales with speed (gold/red = more horizontal bias)
+        const spinStrength = currentSpeed >= 10 ? 2 : 3; // Less spin at high speeds
+        this.gameState.ballVelocityY += hitPosition * spinStrength;
+
+        // GODMODE FUN: Limit vertical velocity to prevent boring up/down bouncing
+        const MAX_Y_VELOCITY = currentSpeed >= 10 ? 4 : 6; // Gold/red: even more horizontal
+        this.gameState.ballVelocityY = Math.max(-MAX_Y_VELOCITY, Math.min(MAX_Y_VELOCITY, this.gameState.ballVelocityY));
+
+        // GODMODE FUN: Ensure minimum horizontal velocity (especially at high speeds)
+        const MIN_X_VELOCITY = currentSpeed >= 10 ? currentSpeed * 0.75 : currentSpeed * 0.5;
+        if (Math.abs(this.gameState.ballVelocityX) < MIN_X_VELOCITY) {
+          this.gameState.ballVelocityX = Math.sign(this.gameState.ballVelocityX) * MIN_X_VELOCITY;
+        }
 
         // Increase ball speed slightly
         this.speedUpBall();
@@ -266,10 +303,21 @@ export class GameSession {
       this.gameState.ballVelocityX = -Math.abs(this.gameState.ballVelocityX);
       this.gameState.ballX = paddle2Left - GAME_CONFIG.BALL_SIZE / 2 - 2;
 
-      // Add spin
+      // GODMODE FUN: Add spin (emergency bounce)
       const paddleCenter = (paddle2Top + paddle2Bottom) / 2;
       const hitPosition = (this.gameState.ballY - paddleCenter) / (GAME_CONFIG.PADDLE_HEIGHT / 2);
-      this.gameState.ballVelocityY += hitPosition * 3;
+
+      const spinStrength = currentSpeed >= 10 ? 2 : 3;
+      this.gameState.ballVelocityY += hitPosition * spinStrength;
+
+      // GODMODE FUN: Clamp Y velocity and ensure horizontal bias
+      const MAX_Y_VELOCITY = currentSpeed >= 10 ? 4 : 6;
+      this.gameState.ballVelocityY = Math.max(-MAX_Y_VELOCITY, Math.min(MAX_Y_VELOCITY, this.gameState.ballVelocityY));
+
+      const MIN_X_VELOCITY = currentSpeed >= 10 ? currentSpeed * 0.75 : currentSpeed * 0.5;
+      if (Math.abs(this.gameState.ballVelocityX) < MIN_X_VELOCITY) {
+        this.gameState.ballVelocityX = Math.sign(this.gameState.ballVelocityX) * MIN_X_VELOCITY;
+      }
 
       this.speedUpBall();
     }
