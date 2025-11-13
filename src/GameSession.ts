@@ -29,8 +29,8 @@ export class GameSession {
       ballY: GAME_CONFIG.CANVAS_HEIGHT / 2,
       ballVelocityX: GAME_CONFIG.INITIAL_BALL_SPEED * (Math.random() > 0.5 ? 1 : -1),
       ballVelocityY: GAME_CONFIG.INITIAL_BALL_SPEED * (Math.random() * 2 - 1),
-      paddle1Y: GAME_CONFIG.CANVAS_HEIGHT / 2 - GAME_CONFIG.PADDLE_HEIGHT / 2, // Center vertically
-      paddle2Y: GAME_CONFIG.CANVAS_HEIGHT / 2 - GAME_CONFIG.PADDLE_HEIGHT / 2, // Center vertically
+      paddle1Y: GAME_CONFIG.CANVAS_HEIGHT / 2, // Center Y (matches client Phaser Container positioning)
+      paddle2Y: GAME_CONFIG.CANVAS_HEIGHT / 2, // Center Y (matches client Phaser Container positioning)
       score1: 0,
       score2: 0,
       gameStarted: false,
@@ -116,8 +116,9 @@ export class GameSession {
     // Left paddle (player 1) - positioned at left edge
     const paddle1Left = 50;
     const paddle1Right = paddle1Left + GAME_CONFIG.PADDLE_WIDTH;
-    const paddle1Top = this.gameState.paddle1Y;
-    const paddle1Bottom = this.gameState.paddle1Y + GAME_CONFIG.PADDLE_HEIGHT;
+    // paddle1Y is the CENTER of the paddle (matches client-side Phaser Container positioning)
+    const paddle1Top = this.gameState.paddle1Y - GAME_CONFIG.PADDLE_HEIGHT / 2;
+    const paddle1Bottom = this.gameState.paddle1Y + GAME_CONFIG.PADDLE_HEIGHT / 2;
 
     // Check if ball crossed the paddle's X boundary
     if (
@@ -148,8 +149,9 @@ export class GameSession {
     // Right paddle (player 2) - positioned at right edge
     const paddle2Left = GAME_CONFIG.CANVAS_WIDTH - 50 - GAME_CONFIG.PADDLE_WIDTH;
     const paddle2Right = paddle2Left + GAME_CONFIG.PADDLE_WIDTH;
-    const paddle2Top = this.gameState.paddle2Y;
-    const paddle2Bottom = this.gameState.paddle2Y + GAME_CONFIG.PADDLE_HEIGHT;
+    // paddle2Y is the CENTER of the paddle (matches client-side Phaser Container positioning)
+    const paddle2Top = this.gameState.paddle2Y - GAME_CONFIG.PADDLE_HEIGHT / 2;
+    const paddle2Bottom = this.gameState.paddle2Y + GAME_CONFIG.PADDLE_HEIGHT / 2;
 
     // Check if ball crossed the paddle's X boundary
     if (
@@ -260,10 +262,10 @@ export class GameSession {
    * Update paddle position for a player
    */
   updatePaddlePosition(playerWs: WebSocket, y: number) {
-    // Clamp paddle position to canvas bounds (vertical movement)
+    // Clamp paddle position to canvas bounds (Y is center of paddle)
     const clampedY = Math.max(
-      0,
-      Math.min(GAME_CONFIG.CANVAS_HEIGHT - GAME_CONFIG.PADDLE_HEIGHT, y)
+      GAME_CONFIG.PADDLE_HEIGHT / 2,
+      Math.min(GAME_CONFIG.CANVAS_HEIGHT - GAME_CONFIG.PADDLE_HEIGHT / 2, y)
     );
 
     if (playerWs === this.player1.ws) {
