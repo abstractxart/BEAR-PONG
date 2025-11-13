@@ -77,6 +77,39 @@ async function handleClientMessage(ws: WebSocket, message: ClientMessage) {
 }
 
 /**
+ * Fetch player profile including avatar from BEARpark API
+ */
+async function fetchPlayerProfile(walletAddress: string) {
+  try {
+    const response = await fetch(`https://bearpark.xyz/api/profile/${walletAddress}`);
+    const data = await response.json() as any;
+
+    if (data.success && data.profile) {
+      let avatarUrl = null;
+
+      // Parse avatar_nft JSON to get the imageUrl
+      if (data.profile.avatar_nft) {
+        try {
+          const avatarData = JSON.parse(data.profile.avatar_nft);
+          avatarUrl = avatarData.imageUrl || avatarData.fallbackImageUrl || null;
+        } catch (e) {
+          // If not JSON, try using it directly as NFT ID
+          avatarUrl = `https://nft.xrpl-labs.com/${data.profile.avatar_nft}`;
+        }
+      }
+
+      return { avatarUrl };
+    }
+
+    console.log(`⚠️ Failed to fetch profile for ${walletAddress}`);
+    return { avatarUrl: null };
+  } catch (error) {
+    console.error(`❌ Error fetching profile for ${walletAddress}:`, error);
+    return { avatarUrl: null };
+  }
+}
+
+/**
  * Fetch equipped cosmetics from BEARpark API
  */
 async function fetchEquippedCosmetics(walletAddress: string) {
@@ -113,6 +146,13 @@ async function handleJoinQueue(ws: WebSocket, playerData: PlayerData) {
   if (activeSessions.has(ws)) {
     console.log('⚠️ Player already in a game');
     return;
+  }
+
+  // Fetch player profile (including avatar)
+  const profile = await fetchPlayerProfile(playerData.wallet);
+  if (profile.avatarUrl) {
+    playerData.avatarUrl = profile.avatarUrl;
+    console.log(`🖼️ Loaded avatar for ${playerData.displayName}: ${profile.avatarUrl.substring(0, 50)}...`);
   }
 
   // Fetch equipped cosmetics
