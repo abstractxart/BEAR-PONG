@@ -60,7 +60,7 @@ export type ServerMessage =
   | { type: 'betting_timeout' }
   | { type: 'countdown'; count: number }
   | { type: 'game_state'; state: GameState }
-  | { type: 'game_over'; winner: 'left' | 'right'; finalScore: { left: number; right: number } }
+  | { type: 'game_over'; winner: 'left' | 'right'; finalScore: { left: number; right: number }; betAmount: number }
   | { type: 'opponent_disconnected' }
   | { type: 'rematch_requested' }
   | { type: 'rematch_accepted' }

@@ -536,6 +536,7 @@ export class GameSession {
         left: this.gameState.score1,
         right: this.gameState.score2,
       },
+      betAmount: this.finalBetAmount,
     };
 
     this.sendToPlayer(this.player1.ws, message);
