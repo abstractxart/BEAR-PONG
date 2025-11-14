@@ -255,9 +255,9 @@ export class GameSession {
       const t = (paddle1Right - (this.prevBallX - GAME_CONFIG.BALL_SIZE / 2)) / this.gameState.ballVelocityX;
       const crossY = this.prevBallY + (this.gameState.ballVelocityY * t);
 
-      // Check if Y position is within paddle bounds (with padding)
-      const minY = paddle1Top - GAME_CONFIG.BALL_SIZE / 2 - COLLISION_PADDING;
-      const maxY = paddle1Bottom + GAME_CONFIG.BALL_SIZE / 2 + COLLISION_PADDING;
+      // Check if Y position is within paddle bounds (EXACT - no padding on Y axis!)
+      const minY = paddle1Top - GAME_CONFIG.BALL_SIZE / 2;
+      const maxY = paddle1Bottom + GAME_CONFIG.BALL_SIZE / 2;
 
       if (crossY >= minY && crossY <= maxY) {
         // HIT! TIER 7: Guaranteed bounce response
@@ -313,8 +313,8 @@ export class GameSession {
       this.gameState.ballVelocityX < 0 && // Moving left
       this.gameState.ballX - GAME_CONFIG.BALL_SIZE / 2 <= paddle1Right && // Past paddle X
       this.gameState.ballX + GAME_CONFIG.BALL_SIZE / 2 >= paddle1Left && // But not completely past
-      this.gameState.ballY >= paddle1Top - COLLISION_PADDING && // Within paddle Y (with padding)
-      this.gameState.ballY <= paddle1Bottom + COLLISION_PADDING
+      this.gameState.ballY >= paddle1Top - GAME_CONFIG.BALL_SIZE / 2 && // Within paddle Y (EXACT - no extra padding!)
+      this.gameState.ballY <= paddle1Bottom + GAME_CONFIG.BALL_SIZE / 2
     ) {
       console.log(`[EMERGENCY] Left paddle FAILSAFE TRIGGERED! ballX=${this.gameState.ballX.toFixed(1)}, ballY=${this.gameState.ballY.toFixed(1)}`);
       this.gameState.ballVelocityX = Math.abs(this.gameState.ballVelocityX);
@@ -368,9 +368,9 @@ export class GameSession {
       const t = (paddle2Left - (this.prevBallX + GAME_CONFIG.BALL_SIZE / 2)) / this.gameState.ballVelocityX;
       const crossY = this.prevBallY + (this.gameState.ballVelocityY * t);
 
-      // Check if Y position is within paddle bounds (with padding)
-      const minY = paddle2Top - GAME_CONFIG.BALL_SIZE / 2 - COLLISION_PADDING;
-      const maxY = paddle2Bottom + GAME_CONFIG.BALL_SIZE / 2 + COLLISION_PADDING;
+      // Check if Y position is within paddle bounds (EXACT - no padding on Y axis!)
+      const minY = paddle2Top - GAME_CONFIG.BALL_SIZE / 2;
+      const maxY = paddle2Bottom + GAME_CONFIG.BALL_SIZE / 2;
 
       if (crossY >= minY && crossY <= maxY) {
         // HIT! TIER 7: Guaranteed bounce response
@@ -426,8 +426,8 @@ export class GameSession {
       this.gameState.ballVelocityX > 0 && // Moving right
       this.gameState.ballX + GAME_CONFIG.BALL_SIZE / 2 >= paddle2Left && // Past paddle X
       this.gameState.ballX - GAME_CONFIG.BALL_SIZE / 2 <= paddle2Right && // But not completely past
-      this.gameState.ballY >= paddle2Top - COLLISION_PADDING && // Within paddle Y (with padding)
-      this.gameState.ballY <= paddle2Bottom + COLLISION_PADDING
+      this.gameState.ballY >= paddle2Top - GAME_CONFIG.BALL_SIZE / 2 && // Within paddle Y (EXACT - no extra padding!)
+      this.gameState.ballY <= paddle2Bottom + GAME_CONFIG.BALL_SIZE / 2
     ) {
       console.log(`[EMERGENCY] Right paddle FAILSAFE TRIGGERED! ballX=${this.gameState.ballX.toFixed(1)}, ballY=${this.gameState.ballY.toFixed(1)}`);
       this.gameState.ballVelocityX = -Math.abs(this.gameState.ballVelocityX);
