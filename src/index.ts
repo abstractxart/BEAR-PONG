@@ -59,6 +59,14 @@ async function handleClientMessage(ws: WebSocket, message: ClientMessage) {
       handlePaddleMove(ws, message.y);
       break;
 
+    case 'set_bet':
+      handleSetBet(ws, message.amount);
+      break;
+
+    case 'ready_to_start':
+      handleReadyToStart(ws);
+      break;
+
     case 'leave':
       handleLeave(ws);
       break;
@@ -210,10 +218,30 @@ function tryMatchmaking() {
     activeSessions.set(player1.ws, session);
     activeSessions.set(player2.ws, session);
 
-    // Start game after a short delay
+    // Start betting lobby (30-second timer)
     setTimeout(() => {
-      session.start();
+      session.startBettingLobby();
     }, 1000);
+  }
+}
+
+/**
+ * 💰 BETTING: Handle player setting their bet
+ */
+function handleSetBet(ws: WebSocket, amount: number) {
+  const session = activeSessions.get(ws);
+  if (session) {
+    session.handleSetBet(ws, amount);
+  }
+}
+
+/**
+ * 💰 BETTING: Handle player clicking READY
+ */
+function handleReadyToStart(ws: WebSocket) {
+  const session = activeSessions.get(ws);
+  if (session) {
+    session.handleReadyToStart(ws);
   }
 }
 

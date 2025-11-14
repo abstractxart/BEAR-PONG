@@ -12,6 +12,14 @@ export class GameSession {
   private countdown: number = GAME_CONFIG.COUNTDOWN_DURATION;
   private countdownInterval: NodeJS.Timeout | null = null;
 
+  // 💰 BETTING: Track betting state
+  private player1Bet: number = 10;
+  private player2Bet: number = 10;
+  private player1Ready: boolean = false;
+  private player2Ready: boolean = false;
+  private bettingTimer: NodeJS.Timeout | null = null;
+  private finalBetAmount: number = 10;
+
   // Track previous ball position for continuous collision detection
   private prevBallX: number = 0;
   private prevBallY: number = 0;
@@ -36,6 +44,93 @@ export class GameSession {
       gameStarted: false,
       countdown: GAME_CONFIG.COUNTDOWN_DURATION,
     };
+  }
+
+  /**
+   * 💰 BETTING: Start the betting lobby timer (30 seconds)
+   */
+  startBettingLobby() {
+    console.log('💰 Starting betting lobby (30 seconds)...');
+
+    this.bettingTimer = setTimeout(() => {
+      console.log('⏰ Betting timer expired!');
+
+      // If neither player is ready, disconnect both and return to menu
+      if (!this.player1Ready && !this.player2Ready) {
+        console.log('❌ Neither player ready - sending timeout to both');
+        this.sendToPlayer(this.player1.ws, { type: 'betting_timeout' });
+        this.sendToPlayer(this.player2.ws, { type: 'betting_timeout' });
+        this.cleanup();
+        return;
+      }
+
+      // If at least one player is ready, start game with their bet
+      if (this.player1Ready || this.player2Ready) {
+        console.log('✅ At least one player ready - starting game');
+        this.finalBetAmount = Math.min(this.player1Bet, this.player2Bet);
+
+        this.sendToPlayer(this.player1.ws, { type: 'final_bet_amount', amount: this.finalBetAmount });
+        this.sendToPlayer(this.player2.ws, { type: 'final_bet_amount', amount: this.finalBetAmount });
+
+        // Start game countdown
+        this.start();
+      }
+    }, 30000); // 30 seconds
+  }
+
+  /**
+   * 💰 BETTING: Handle player setting their bet
+   */
+  handleSetBet(playerWs: WebSocket, amount: number) {
+    console.log(`💰 Player set bet: ${amount}`);
+
+    if (playerWs === this.player1.ws) {
+      this.player1Bet = amount;
+      this.sendToPlayer(this.player2.ws, { type: 'opponent_bet_set', amount });
+    } else if (playerWs === this.player2.ws) {
+      this.player2Bet = amount;
+      this.sendToPlayer(this.player1.ws, { type: 'opponent_bet_set', amount });
+    }
+  }
+
+  /**
+   * 💰 BETTING: Handle player clicking READY
+   */
+  handleReadyToStart(playerWs: WebSocket) {
+    console.log('✅ Player is ready!');
+
+    // Mark player as ready
+    if (playerWs === this.player1.ws) {
+      this.player1Ready = true;
+    } else if (playerWs === this.player2.ws) {
+      this.player2Ready = true;
+    }
+
+    // Notify opponent
+    const opponent = playerWs === this.player1.ws ? this.player2 : this.player1;
+    this.sendToPlayer(opponent.ws, { type: 'opponent_ready' });
+
+    // If both ready, determine final bet and start game
+    if (this.player1Ready && this.player2Ready) {
+      console.log('🎮 Both players ready - starting game!');
+
+      // Use minimum of both bets
+      this.finalBetAmount = Math.min(this.player1Bet, this.player2Bet);
+      console.log(`💰 Final bet amount: ${this.finalBetAmount}`);
+
+      // Send final bet to both players
+      this.sendToPlayer(this.player1.ws, { type: 'final_bet_amount', amount: this.finalBetAmount });
+      this.sendToPlayer(this.player2.ws, { type: 'final_bet_amount', amount: this.finalBetAmount });
+
+      // Cancel betting timer
+      if (this.bettingTimer) {
+        clearTimeout(this.bettingTimer);
+        this.bettingTimer = null;
+      }
+
+      // Start countdown/game
+      this.start();
+    }
   }
 
   /**
@@ -505,6 +600,10 @@ export class GameSession {
       clearInterval(this.countdownInterval);
       this.countdownInterval = null;
     }
+    if (this.bettingTimer) {
+      clearTimeout(this.bettingTimer);
+      this.bettingTimer = null;
+    }
 
     // Notify other player
     const otherPlayer = playerWs === this.player1.ws ? this.player2 : this.player1;
@@ -522,6 +621,10 @@ export class GameSession {
     if (this.countdownInterval) {
       clearInterval(this.countdownInterval);
       this.countdownInterval = null;
+    }
+    if (this.bettingTimer) {
+      clearTimeout(this.bettingTimer);
+      this.bettingTimer = null;
     }
   }
 

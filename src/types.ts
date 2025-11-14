@@ -44,6 +44,8 @@ export interface GameState {
 export type ClientMessage =
   | { type: 'join_queue'; data: PlayerData }
   | { type: 'paddle_move'; y: number; timestamp: number }
+  | { type: 'set_bet'; amount: number }
+  | { type: 'ready_to_start' }
   | { type: 'ready' }
   | { type: 'rematch' }
   | { type: 'leave' };
@@ -52,6 +54,10 @@ export type ClientMessage =
 export type ServerMessage =
   | { type: 'queue_joined'; position: number }
   | { type: 'match_found'; opponent: PlayerData; yourSide: 'left' | 'right' }
+  | { type: 'opponent_bet_set'; amount: number }
+  | { type: 'opponent_ready' }
+  | { type: 'final_bet_amount'; amount: number }
+  | { type: 'betting_timeout' }
   | { type: 'countdown'; count: number }
   | { type: 'game_state'; state: GameState }
   | { type: 'game_over'; winner: 'left' | 'right'; finalScore: { left: number; right: number } }
