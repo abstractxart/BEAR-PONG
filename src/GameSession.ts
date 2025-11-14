@@ -13,12 +13,12 @@ export class GameSession {
   private countdownInterval: NodeJS.Timeout | null = null;
 
   // 💰 BETTING: Track betting state
-  private player1Bet: number = 10;
-  private player2Bet: number = 10;
+  private player1Bet: number = 0;
+  private player2Bet: number = 0;
   private player1Ready: boolean = false;
   private player2Ready: boolean = false;
   private bettingTimer: NodeJS.Timeout | null = null;
-  private finalBetAmount: number = 10;
+  private finalBetAmount: number = 0;
 
   // Track previous ball position for continuous collision detection
   private prevBallX: number = 0;
@@ -67,7 +67,13 @@ export class GameSession {
       // If at least one player is ready, start game with their bet
       if (this.player1Ready || this.player2Ready) {
         console.log('✅ At least one player ready - starting game');
-        this.finalBetAmount = Math.min(this.player1Bet, this.player2Bet);
+
+        // RULE: If either player bets 0, final bet is 0 (no betting mode)
+        if (this.player1Bet === 0 || this.player2Bet === 0) {
+          this.finalBetAmount = 0;
+        } else {
+          this.finalBetAmount = Math.min(this.player1Bet, this.player2Bet);
+        }
 
         this.sendToPlayer(this.player1.ws, { type: 'final_bet_amount', amount: this.finalBetAmount });
         this.sendToPlayer(this.player2.ws, { type: 'final_bet_amount', amount: this.finalBetAmount });
@@ -114,8 +120,12 @@ export class GameSession {
     if (this.player1Ready && this.player2Ready) {
       console.log('🎮 Both players ready - starting game!');
 
-      // Use minimum of both bets
-      this.finalBetAmount = Math.min(this.player1Bet, this.player2Bet);
+      // RULE: If either player bets 0, final bet is 0 (no betting mode)
+      if (this.player1Bet === 0 || this.player2Bet === 0) {
+        this.finalBetAmount = 0;
+      } else {
+        this.finalBetAmount = Math.min(this.player1Bet, this.player2Bet);
+      }
       console.log(`💰 Final bet amount: ${this.finalBetAmount}`);
 
       // Send final bet to both players
