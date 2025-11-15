@@ -47,6 +47,8 @@ export class GameSession {
       ballVelocityY: GAME_CONFIG.INITIAL_BALL_SPEED * (Math.random() * 2 - 1),
       paddle1Y: GAME_CONFIG.CANVAS_HEIGHT / 2, // Center Y (matches client Phaser Container positioning)
       paddle2Y: GAME_CONFIG.CANVAS_HEIGHT / 2, // Center Y (matches client Phaser Container positioning)
+      paddle1Height: GAME_CONFIG.PADDLE_HEIGHT,  // 🔥 Initialize paddle heights
+      paddle2Height: GAME_CONFIG.PADDLE_HEIGHT,  // 🔥 Initialize paddle heights
       score1: 0,
       score2: 0,
       gameStarted: false,
@@ -639,7 +641,7 @@ export class GameSession {
   }
 
   /**
-   * Increase ball speed up to max
+   * Increase ball speed up to max AND shrink paddles progressively
    */
   private speedUpBall() {
     const currentSpeed = Math.sqrt(
@@ -650,6 +652,20 @@ export class GameSession {
       const speedMultiplier = 1 + GAME_CONFIG.BALL_SPEED_INCREMENT / currentSpeed;
       this.gameState.ballVelocityX *= speedMultiplier;
       this.gameState.ballVelocityY *= speedMultiplier;
+    }
+
+    // 🔥 SHRINK PADDLES progressively (down to 33% minimum)
+    if (this.gameState.paddle1Height > GAME_CONFIG.MIN_PADDLE_HEIGHT) {
+      this.gameState.paddle1Height = Math.max(
+        GAME_CONFIG.MIN_PADDLE_HEIGHT,
+        this.gameState.paddle1Height - GAME_CONFIG.PADDLE_SHRINK_PER_HIT
+      );
+    }
+    if (this.gameState.paddle2Height > GAME_CONFIG.MIN_PADDLE_HEIGHT) {
+      this.gameState.paddle2Height = Math.max(
+        GAME_CONFIG.MIN_PADDLE_HEIGHT,
+        this.gameState.paddle2Height - GAME_CONFIG.PADDLE_SHRINK_PER_HIT
+      );
     }
   }
 

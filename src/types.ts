@@ -34,6 +34,8 @@ export interface GameState {
   ballVelocityY: number;
   paddle1Y: number;
   paddle2Y: number;
+  paddle1Height: number;  // 🔥 Added for progressive paddle shrinking
+  paddle2Height: number;  // 🔥 Added for progressive paddle shrinking
   score1: number;
   score2: number;
   gameStarted: boolean;
@@ -77,11 +79,14 @@ export const GAME_CONFIG = {
   CANVAS_HEIGHT: 720,
   PADDLE_WIDTH: 20,
   PADDLE_HEIGHT: 120,
+  MIN_PADDLE_HEIGHT: 40,  // 🔥 33% of original (120 * 0.33 ≈ 40)
   BALL_SIZE: 20,
-  PADDLE_SPEED: 10,
-  INITIAL_BALL_SPEED: 6,
-  BALL_SPEED_INCREMENT: 0.6,  // 🔥 JUICE: DOUBLED for aggressive ramping (was 0.3)
-  MAX_BALL_SPEED: 15,
+  PADDLE_SPEED: 13,  // 🚀 Increased from 10 for faster paddle response
+  PADDLE_MAX_VELOCITY: 45,  // 🚀 Increased from 35 for snappier movement
+  INITIAL_BALL_SPEED: 8,  // 🚀 Increased from 6 for faster-paced gameplay
+  BALL_SPEED_INCREMENT: 0.8,  // 🚀 Increased from 0.6 for more aggressive speed ramping
+  MAX_BALL_SPEED: 35,  // 🚀🔥 BROKEN/BG123 SPEED MODE - Increased from 15 to 35!
+  PADDLE_SHRINK_PER_HIT: 3,  // 🔥 Paddle shrinks by 3px per rally hit
   WINNING_SCORE: 3,
   TICK_RATE: 60, // Server updates per second
   COUNTDOWN_DURATION: 3,
