@@ -649,9 +649,22 @@ export class GameSession {
     );
 
     if (currentSpeed < GAME_CONFIG.MAX_BALL_SPEED) {
-      const speedMultiplier = 1 + GAME_CONFIG.BALL_SPEED_INCREMENT / currentSpeed;
-      this.gameState.ballVelocityX *= speedMultiplier;
-      this.gameState.ballVelocityY *= speedMultiplier;
+      // 🚀 AGGRESSIVE SPEED INCREASE: Fixed multiplier for consistent ramping
+      const speedMultiplier = 1 + GAME_CONFIG.BALL_SPEED_INCREMENT;
+      const newVelX = this.gameState.ballVelocityX * speedMultiplier;
+      const newVelY = this.gameState.ballVelocityY * speedMultiplier;
+      
+      // Calculate new speed and cap at max
+      const newSpeed = Math.sqrt(newVelX ** 2 + newVelY ** 2);
+      if (newSpeed <= GAME_CONFIG.MAX_BALL_SPEED) {
+        this.gameState.ballVelocityX = newVelX;
+        this.gameState.ballVelocityY = newVelY;
+      } else {
+        // Cap at max speed while preserving direction
+        const angle = Math.atan2(this.gameState.ballVelocityY, this.gameState.ballVelocityX);
+        this.gameState.ballVelocityX = Math.cos(angle) * GAME_CONFIG.MAX_BALL_SPEED;
+        this.gameState.ballVelocityY = Math.sin(angle) * GAME_CONFIG.MAX_BALL_SPEED;
+      }
     }
 
     // 🔥 SHRINK PADDLES progressively (down to 33% minimum)

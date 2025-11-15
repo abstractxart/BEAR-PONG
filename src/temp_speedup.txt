@@ -1,0 +1,28 @@
+  /**
+   * Increase ball speed up to max AND shrink paddles progressively
+   */
+  private speedUpBall() {
+    const currentSpeed = Math.sqrt(
+      this.gameState.ballVelocityX ** 2 + this.gameState.ballVelocityY ** 2
+    );
+
+    if (currentSpeed < GAME_CONFIG.MAX_BALL_SPEED) {
+      const speedMultiplier = 1 + GAME_CONFIG.BALL_SPEED_INCREMENT / currentSpeed;
+      this.gameState.ballVelocityX *= speedMultiplier;
+      this.gameState.ballVelocityY *= speedMultiplier;
+    }
+
+    // 🔥 SHRINK PADDLES progressively (down to 33% minimum)
+    if (this.gameState.paddle1Height > GAME_CONFIG.MIN_PADDLE_HEIGHT) {
+      this.gameState.paddle1Height = Math.max(
+        GAME_CONFIG.MIN_PADDLE_HEIGHT,
+        this.gameState.paddle1Height - GAME_CONFIG.PADDLE_SHRINK_PER_HIT
+      );
+    }
+    if (this.gameState.paddle2Height > GAME_CONFIG.MIN_PADDLE_HEIGHT) {
+      this.gameState.paddle2Height = Math.max(
+        GAME_CONFIG.MIN_PADDLE_HEIGHT,
+        this.gameState.paddle2Height - GAME_CONFIG.PADDLE_SHRINK_PER_HIT
+      );
+    }
+  }
