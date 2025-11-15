@@ -32,11 +32,6 @@ export class GameSession {
   private player2UsedUltimates: Set<string> = new Set();
   private powerHitPlayer: number | null = null; // 1 or 2 if power hit is active
 
-  // 🎉 SCORE COUNTDOWN: Pause game and show flashy 3-2-1-GO! after each goal
-  private scoreCountdown: number = 3;
-  private scoreCountdownInterval: NodeJS.Timeout | null = null;
-  private isPaused: boolean = false;
-
   constructor(
     player1: { ws: WebSocket; data: PlayerData },
     player2: { ws: WebSocket; data: PlayerData }
@@ -286,8 +281,6 @@ export class GameSession {
    */
   private updatePhysics() {
     if (!this.gameState.gameStarted) return;
-    if (this.isPaused) return; // 🎉 Pause during score countdown
-
 
     // 🚀 ULTIMATE ABILITIES: Check for TIME_FREEZE expiration
     if (this.timeFreezeActive && Date.now() >= this.timeFreezeEndTime) {
@@ -632,11 +625,11 @@ export class GameSession {
     if (this.gameState.ballX <= 0) {
       // Player 2 scored (ball went off left)
       this.gameState.score2++;
-      this.startScoreCountdown(); // 🎉 Start flashy countdown!
+      this.resetBall();
     } else if (this.gameState.ballX >= GAME_CONFIG.CANVAS_WIDTH) {
       // Player 1 scored (ball went off right)
       this.gameState.score1++;
-      this.startScoreCountdown(); // 🎉 Start flashy countdown!
+      this.resetBall();
     }
 
     // Check for game over
@@ -692,50 +685,6 @@ export class GameSession {
   /**
    * Reset ball to center after scoring
    */
-  /**
-   * 🎉 Start flashy 3-2-1-GO! countdown after scoring
-   */
-  private startScoreCountdown() {
-    console.log("🎉 Starting score countdown: 3... 2... 1... GO!");
-    
-    // Pause the game
-    this.isPaused = true;
-    
-    // Reset countdown
-    this.scoreCountdown = 3;
-    
-    // Send initial countdown (3)
-    this.sendToPlayer(this.player1.ws, { type: "countdown", count: this.scoreCountdown });
-    this.sendToPlayer(this.player2.ws, { type: "countdown", count: this.scoreCountdown });
-    
-    // Start countdown interval
-    this.scoreCountdownInterval = setInterval(() => {
-      this.scoreCountdown--;
-      
-      if (this.scoreCountdown > 0) {
-        // Send countdown numbers (2, 1)
-        this.sendToPlayer(this.player1.ws, { type: "countdown", count: this.scoreCountdown });
-        this.sendToPlayer(this.player2.ws, { type: "countdown", count: this.scoreCountdown });
-      } else {
-        // Send GO! (count = 0)
-        this.sendToPlayer(this.player1.ws, { type: "countdown", count: 0 });
-        this.sendToPlayer(this.player2.ws, { type: "countdown", count: 0 });
-        
-        // Stop countdown and resume game
-        if (this.scoreCountdownInterval) {
-          clearInterval(this.scoreCountdownInterval);
-          this.scoreCountdownInterval = null;
-        }
-        
-        // Reset ball and resume
-        this.resetBall();
-        this.isPaused = false;
-        
-        console.log("🎉 Countdown complete - game resumed!");
-      }
-    }, 1000); // 1 second intervals
-  }
-
   private resetBall() {
     this.gameState.ballX = GAME_CONFIG.CANVAS_WIDTH / 2;
     this.gameState.ballY = GAME_CONFIG.CANVAS_HEIGHT / 2;
