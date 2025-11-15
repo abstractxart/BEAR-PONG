@@ -624,24 +624,30 @@ export class GameSession {
     if (this.gameState.ballX <= 0) {
       // Player 2 scored (ball went off left)
       this.gameState.score2++;
+      console.log(`🎯 Player 2 scored! Score: ${this.gameState.score1} - ${this.gameState.score2}`);
 
       // Check for game over BEFORE starting countdown
       if (this.gameState.score2 >= GAME_CONFIG.WINNING_SCORE) {
+        console.log(`🏆 GAME OVER! Player 2 wins with score ${this.gameState.score2} >= ${GAME_CONFIG.WINNING_SCORE}`);
         this.endGame('right');
         return; // Don't start countdown if game is over
       }
 
+      console.log(`📊 Starting countdown (score not yet at ${GAME_CONFIG.WINNING_SCORE})`);
       this.startScoreCountdown(); // 🎉 Start flashy countdown!
     } else if (this.gameState.ballX >= GAME_CONFIG.CANVAS_WIDTH) {
       // Player 1 scored (ball went off right)
       this.gameState.score1++;
+      console.log(`🎯 Player 1 scored! Score: ${this.gameState.score1} - ${this.gameState.score2}`);
 
       // Check for game over BEFORE starting countdown
       if (this.gameState.score1 >= GAME_CONFIG.WINNING_SCORE) {
+        console.log(`🏆 GAME OVER! Player 1 wins with score ${this.gameState.score1} >= ${GAME_CONFIG.WINNING_SCORE}`);
         this.endGame('left');
         return; // Don't start countdown if game is over
       }
 
+      console.log(`📊 Starting countdown (score not yet at ${GAME_CONFIG.WINNING_SCORE})`);
       this.startScoreCountdown(); // 🎉 Start flashy countdown!
     }
   }
