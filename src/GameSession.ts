@@ -296,17 +296,9 @@ export class GameSession {
       this.ballSpeedMultiplier = 1;
     }
 
-    // TIER 3: Velocity clamping - prevent ball from moving too fast per frame
-    const MAX_FRAME_DISTANCE = GAME_CONFIG.PADDLE_WIDTH * 0.75;
-    const frameDistance = Math.sqrt(
-      this.gameState.ballVelocityX * this.gameState.ballVelocityX +
-      this.gameState.ballVelocityY * this.gameState.ballVelocityY
-    );
-    if (frameDistance > MAX_FRAME_DISTANCE) {
-      const scale = MAX_FRAME_DISTANCE / frameDistance;
-      this.gameState.ballVelocityX *= scale;
-      this.gameState.ballVelocityY *= scale;
-    }
+    // 🚀🔥 BROKEN SPEED MODE: Velocity clamping REMOVED!
+    // Ball can now reach MAX_BALL_SPEED (35) - BG123 BROKEN MODE!
+
 
     // Store previous position for swept collision
     this.prevBallX = this.gameState.ballX;
