@@ -84,7 +84,7 @@ export const GAME_CONFIG = {
   PADDLE_SPEED: 13,  // 🚀 Increased from 10 for faster paddle response
   PADDLE_MAX_VELOCITY: 45,  // 🚀 Increased from 35 for snappier movement
   INITIAL_BALL_SPEED: 8,  // 🚀 Increased from 6 for faster-paced gameplay
-  BALL_SPEED_INCREMENT: 0.20,  // 🚀🔥 20% speed increase per hit - INSANE RAMPING!
+  BALL_SPEED_INCREMENT: 0.02,  // 🚀 2% speed increase per hit
   MAX_BALL_SPEED: 35,  // 🚀🔥 BROKEN/BG123 SPEED MODE - Increased from 15 to 35!
   PADDLE_SHRINK_PER_HIT: 3,  // 🔥 Paddle shrinks by 3px per rally hit
   WINNING_SCORE: 3,

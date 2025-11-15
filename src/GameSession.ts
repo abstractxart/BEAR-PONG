@@ -624,18 +624,25 @@ export class GameSession {
     if (this.gameState.ballX <= 0) {
       // Player 2 scored (ball went off left)
       this.gameState.score2++;
+
+      // Check for game over BEFORE starting countdown
+      if (this.gameState.score2 >= GAME_CONFIG.WINNING_SCORE) {
+        this.endGame('right');
+        return; // Don't start countdown if game is over
+      }
+
       this.startScoreCountdown(); // 🎉 Start flashy countdown!
     } else if (this.gameState.ballX >= GAME_CONFIG.CANVAS_WIDTH) {
       // Player 1 scored (ball went off right)
       this.gameState.score1++;
-      this.startScoreCountdown(); // 🎉 Start flashy countdown!
-    }
 
-    // Check for game over
-    if (this.gameState.score1 >= GAME_CONFIG.WINNING_SCORE) {
-      this.endGame('left');
-    } else if (this.gameState.score2 >= GAME_CONFIG.WINNING_SCORE) {
-      this.endGame('right');
+      // Check for game over BEFORE starting countdown
+      if (this.gameState.score1 >= GAME_CONFIG.WINNING_SCORE) {
+        this.endGame('left');
+        return; // Don't start countdown if game is over
+      }
+
+      this.startScoreCountdown(); // 🎉 Start flashy countdown!
     }
   }
 
