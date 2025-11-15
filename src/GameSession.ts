@@ -1,7 +1,7 @@
 /**
  * GameSession - Handles the physics and state for a single Pong match
  */
-import { GAME_CONFIG, GameState, PlayerData } from './types.js';
+import { GAME_CONFIG, GameState, PlayerData, UltimateAbilityType } from './types.js';
 import type { WebSocket } from 'ws';
 
 export class GameSession {
@@ -23,6 +23,14 @@ export class GameSession {
   // Track previous ball position for continuous collision detection
   private prevBallX: number = 0;
   private prevBallY: number = 0;
+
+  // 🚀 ULTIMATE ABILITIES: Track active ultimates
+  private timeFreezeActive: boolean = false;
+  private timeFreezeEndTime: number = 0;
+  private ballSpeedMultiplier: number = 1; // For TIME_FREEZE
+  private player1UsedUltimates: Set<string> = new Set();
+  private player2UsedUltimates: Set<string> = new Set();
+  private powerHitPlayer: number | null = null; // 1 or 2 if power hit is active
 
   constructor(
     player1: { ws: WebSocket; data: PlayerData },
@@ -144,6 +152,81 @@ export class GameSession {
   }
 
   /**
+   * 🚀 ULTIMATE ABILITIES: Handle player using an ultimate ability
+   */
+  handleUseUltimate(playerWs: WebSocket, abilityType: UltimateAbilityType) {
+    console.log(`🚀 Player attempting to use ultimate: ${abilityType}`);
+
+    // Determine which player and their used set
+    const isPlayer1 = playerWs === this.player1.ws;
+    const usedSet = isPlayer1 ? this.player1UsedUltimates : this.player2UsedUltimates;
+    const playerSide: 'left' | 'right' = isPlayer1 ? 'left' : 'right';
+
+    // Check if already used this ability
+    if (usedSet.has(abilityType)) {
+      console.log(`❌ ${abilityType} already used by ${playerSide}`);
+      this.sendToPlayer(playerWs, { type: 'error', message: 'Ultimate already used!' });
+      return;
+    }
+
+    // Mark as used
+    usedSet.add(abilityType);
+    console.log(`✅ ${abilityType} activated by ${playerSide}`);
+
+    // Execute the ability
+    switch (abilityType) {
+      case 'time_freeze':
+        this.activateTimeFreeze();
+        break;
+      case 'paddle_dash':
+        this.activatePaddleDash(isPlayer1);
+        break;
+      case 'power_hit':
+        this.activatePowerHit(isPlayer1);
+        break;
+    }
+
+    // Broadcast to both players that ultimate was activated
+    const message = {
+      type: 'ultimate_activated' as const,
+      side: playerSide,
+      abilityType,
+    };
+    this.sendToPlayer(this.player1.ws, message);
+    this.sendToPlayer(this.player2.ws, message);
+  }
+
+  /**
+   * 🚀 TIME FREEZE: Reduce ball speed to 30% for 3 seconds
+   */
+  private activateTimeFreeze() {
+    console.log('⏰ TIME FREEZE activated - ball speed reduced to 30%');
+    this.timeFreezeActive = true;
+    this.ballSpeedMultiplier = 0.3;
+    this.timeFreezeEndTime = Date.now() + 3000; // 3 seconds
+  }
+
+  /**
+   * 🚀 PADDLE DASH: Teleport paddle to ball's Y position
+   */
+  private activatePaddleDash(isPlayer1: boolean) {
+    console.log(`⚡ PADDLE DASH activated - teleporting paddle to ball Y`);
+    if (isPlayer1) {
+      this.gameState.paddle1Y = this.gameState.ballY;
+    } else {
+      this.gameState.paddle2Y = this.gameState.ballY;
+    }
+  }
+
+  /**
+   * 🚀 POWER HIT: Next paddle hit increases ball speed significantly
+   */
+  private activatePowerHit(isPlayer1: boolean) {
+    console.log(`💥 POWER HIT activated for player ${isPlayer1 ? 1 : 2}`);
+    this.powerHitPlayer = isPlayer1 ? 1 : 2;
+  }
+
+  /**
    * Start the countdown and then the game
    */
   start() {
@@ -197,6 +280,13 @@ export class GameSession {
   private updatePhysics() {
     if (!this.gameState.gameStarted) return;
 
+    // 🚀 ULTIMATE ABILITIES: Check for TIME_FREEZE expiration
+    if (this.timeFreezeActive && Date.now() >= this.timeFreezeEndTime) {
+      console.log('⏰ TIME FREEZE expired - restoring normal ball speed');
+      this.timeFreezeActive = false;
+      this.ballSpeedMultiplier = 1;
+    }
+
     // TIER 3: Velocity clamping - prevent ball from moving too fast per frame
     const MAX_FRAME_DISTANCE = GAME_CONFIG.PADDLE_WIDTH * 0.75;
     const frameDistance = Math.sqrt(
@@ -213,9 +303,9 @@ export class GameSession {
     this.prevBallX = this.gameState.ballX;
     this.prevBallY = this.gameState.ballY;
 
-    // Move ball
-    this.gameState.ballX += this.gameState.ballVelocityX;
-    this.gameState.ballY += this.gameState.ballVelocityY;
+    // Move ball (apply TIME_FREEZE multiplier if active)
+    this.gameState.ballX += this.gameState.ballVelocityX * this.ballSpeedMultiplier;
+    this.gameState.ballY += this.gameState.ballVelocityY * this.ballSpeedMultiplier;
 
     // Ball collision with top/bottom walls (bounce off)
     if (
@@ -309,6 +399,15 @@ export class GameSession {
           this.speedUpBall(); // BONUS speed increase!
         }
 
+        // 🚀 ULTIMATE: POWER HIT - Apply massive speed boost if active
+        if (this.powerHitPlayer === 1) {
+          console.log('💥 POWER HIT triggered on left paddle - MASSIVE SPEED BOOST!');
+          this.speedUpBall();
+          this.speedUpBall();
+          this.speedUpBall(); // Triple speed boost!
+          this.powerHitPlayer = null; // Clear after use
+        }
+
         leftPaddleHit = true;
       } else {
         // MISS! Log why
@@ -357,6 +456,15 @@ export class GameSession {
       // 🔥 JUICE: PERFECT HIT = DOUBLE SPEED BONUS!
       if (isPerfectHit) {
         this.speedUpBall(); // BONUS speed increase!
+      }
+
+      // 🚀 ULTIMATE: POWER HIT - Apply massive speed boost if active
+      if (this.powerHitPlayer === 1) {
+        console.log('💥 POWER HIT triggered on left paddle FAILSAFE - MASSIVE SPEED BOOST!');
+        this.speedUpBall();
+        this.speedUpBall();
+        this.speedUpBall(); // Triple speed boost!
+        this.powerHitPlayer = null; // Clear after use
       }
     }
 
@@ -422,6 +530,15 @@ export class GameSession {
           this.speedUpBall(); // BONUS speed increase!
         }
 
+        // 🚀 ULTIMATE: POWER HIT - Apply massive speed boost if active
+        if (this.powerHitPlayer === 2) {
+          console.log('💥 POWER HIT triggered on right paddle - MASSIVE SPEED BOOST!');
+          this.speedUpBall();
+          this.speedUpBall();
+          this.speedUpBall(); // Triple speed boost!
+          this.powerHitPlayer = null; // Clear after use
+        }
+
         rightPaddleHit = true;
       } else {
         // MISS! Log why
@@ -470,6 +587,15 @@ export class GameSession {
       // 🔥 JUICE: PERFECT HIT = DOUBLE SPEED BONUS!
       if (isPerfectHit) {
         this.speedUpBall(); // BONUS speed increase!
+      }
+
+      // 🚀 ULTIMATE: POWER HIT - Apply massive speed boost if active
+      if (this.powerHitPlayer === 2) {
+        console.log('💥 POWER HIT triggered on right paddle FAILSAFE - MASSIVE SPEED BOOST!');
+        this.speedUpBall();
+        this.speedUpBall();
+        this.speedUpBall(); // Triple speed boost!
+        this.powerHitPlayer = null; // Clear after use
       }
     }
 

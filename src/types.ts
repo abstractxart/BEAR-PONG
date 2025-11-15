@@ -40,6 +40,9 @@ export interface GameState {
   countdown?: number; // 3, 2, 1, null
 }
 
+// Ultimate ability types
+export type UltimateAbilityType = 'time_freeze' | 'paddle_dash' | 'power_hit';
+
 // Client -> Server messages
 export type ClientMessage =
   | { type: 'join_queue'; data: PlayerData }
@@ -47,6 +50,7 @@ export type ClientMessage =
   | { type: 'set_bet'; amount: number }
   | { type: 'ready_to_start' }
   | { type: 'ready' }
+  | { type: 'use_ultimate'; abilityType: UltimateAbilityType }
   | { type: 'rematch' }
   | { type: 'leave' };
 
@@ -60,6 +64,7 @@ export type ServerMessage =
   | { type: 'betting_timeout' }
   | { type: 'countdown'; count: number }
   | { type: 'game_state'; state: GameState }
+  | { type: 'ultimate_activated'; side: 'left' | 'right'; abilityType: UltimateAbilityType }
   | { type: 'game_over'; winner: 'left' | 'right'; finalScore: { left: number; right: number }; betAmount: number }
   | { type: 'opponent_disconnected' }
   | { type: 'rematch_requested' }

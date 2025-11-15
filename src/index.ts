@@ -67,6 +67,10 @@ async function handleClientMessage(ws: WebSocket, message: ClientMessage) {
       handleReadyToStart(ws);
       break;
 
+    case 'use_ultimate':
+      handleUseUltimate(ws, message.abilityType);
+      break;
+
     case 'leave':
       handleLeave(ws);
       break;
@@ -242,6 +246,16 @@ function handleReadyToStart(ws: WebSocket) {
   const session = activeSessions.get(ws);
   if (session) {
     session.handleReadyToStart(ws);
+  }
+}
+
+/**
+ * 🚀 ULTIMATE ABILITIES: Handle player using an ultimate ability
+ */
+function handleUseUltimate(ws: WebSocket, abilityType: string) {
+  const session = activeSessions.get(ws);
+  if (session) {
+    session.handleUseUltimate(ws, abilityType as any);
   }
 }
 
