@@ -85,9 +85,11 @@ export class GameSession {
 
         // RULE: If either player bets 0, final bet is 0 (no betting mode)
         if (this.player1Bet === 0 || this.player2Bet === 0) {
+          console.log(`💰 [SERVER TIMEOUT] One player bet 0 (Player1: ${this.player1Bet}, Player2: ${this.player2Bet}) - Setting finalBetAmount to 0`);
           this.finalBetAmount = 0;
         } else {
           this.finalBetAmount = Math.min(this.player1Bet, this.player2Bet);
+          console.log(`💰 [SERVER TIMEOUT] Both players bet (Player1: ${this.player1Bet}, Player2: ${this.player2Bet}) - Setting finalBetAmount to ${this.finalBetAmount}`);
         }
 
         this.sendToPlayer(this.player1.ws, { type: 'final_bet_amount', amount: this.finalBetAmount });
@@ -137,9 +139,11 @@ export class GameSession {
 
       // RULE: If either player bets 0, final bet is 0 (no betting mode)
       if (this.player1Bet === 0 || this.player2Bet === 0) {
+        console.log(`💰 [SERVER] One player bet 0 (Player1: ${this.player1Bet}, Player2: ${this.player2Bet}) - Setting finalBetAmount to 0`);
         this.finalBetAmount = 0;
       } else {
         this.finalBetAmount = Math.min(this.player1Bet, this.player2Bet);
+        console.log(`💰 [SERVER] Both players bet (Player1: ${this.player1Bet}, Player2: ${this.player2Bet}) - Setting finalBetAmount to ${this.finalBetAmount}`);
       }
       console.log(`💰 Final bet amount: ${this.finalBetAmount}`);
 
@@ -770,6 +774,7 @@ export class GameSession {
     }
 
     // Send game over message to both players
+    console.log(`💰 [SERVER] Sending game_over - finalBetAmount: ${this.finalBetAmount}`);
     const message = {
       type: 'game_over' as const,
       winner,
@@ -780,6 +785,7 @@ export class GameSession {
       betAmount: this.finalBetAmount,
     };
 
+    console.log(`💰 [SERVER] game_over message:`, JSON.stringify(message));
     this.sendToPlayer(this.player1.ws, message);
     this.sendToPlayer(this.player2.ws, message);
   }
