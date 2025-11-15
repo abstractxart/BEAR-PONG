@@ -401,10 +401,15 @@ export class GameSession {
 
         // 🚀 ULTIMATE: POWER HIT - Apply massive speed boost if active
         if (this.powerHitPlayer === 1) {
-          console.log('💥 POWER HIT triggered on left paddle - MASSIVE SPEED BOOST!');
+          console.log('💥 POWER HIT triggered on left paddle - INSANE SPEED BOOST!');
           this.speedUpBall();
           this.speedUpBall();
-          this.speedUpBall(); // Triple speed boost!
+          this.speedUpBall();
+          this.speedUpBall();
+          this.speedUpBall();
+          this.speedUpBall();
+          this.speedUpBall();
+          this.speedUpBall(); // 8x speed boost!
           this.powerHitPlayer = null; // Clear after use
         }
 
@@ -460,10 +465,15 @@ export class GameSession {
 
       // 🚀 ULTIMATE: POWER HIT - Apply massive speed boost if active
       if (this.powerHitPlayer === 1) {
-        console.log('💥 POWER HIT triggered on left paddle FAILSAFE - MASSIVE SPEED BOOST!');
+        console.log('💥 POWER HIT triggered on left paddle FAILSAFE - INSANE SPEED BOOST!');
         this.speedUpBall();
         this.speedUpBall();
-        this.speedUpBall(); // Triple speed boost!
+        this.speedUpBall();
+        this.speedUpBall();
+        this.speedUpBall();
+        this.speedUpBall();
+        this.speedUpBall();
+        this.speedUpBall(); // 8x speed boost!
         this.powerHitPlayer = null; // Clear after use
       }
     }
@@ -532,10 +542,15 @@ export class GameSession {
 
         // 🚀 ULTIMATE: POWER HIT - Apply massive speed boost if active
         if (this.powerHitPlayer === 2) {
-          console.log('💥 POWER HIT triggered on right paddle - MASSIVE SPEED BOOST!');
+          console.log('💥 POWER HIT triggered on right paddle - INSANE SPEED BOOST!');
           this.speedUpBall();
           this.speedUpBall();
-          this.speedUpBall(); // Triple speed boost!
+          this.speedUpBall();
+          this.speedUpBall();
+          this.speedUpBall();
+          this.speedUpBall();
+          this.speedUpBall();
+          this.speedUpBall(); // 8x speed boost!
           this.powerHitPlayer = null; // Clear after use
         }
 
@@ -591,10 +606,15 @@ export class GameSession {
 
       // 🚀 ULTIMATE: POWER HIT - Apply massive speed boost if active
       if (this.powerHitPlayer === 2) {
-        console.log('💥 POWER HIT triggered on right paddle FAILSAFE - MASSIVE SPEED BOOST!');
+        console.log('💥 POWER HIT triggered on right paddle FAILSAFE - INSANE SPEED BOOST!');
         this.speedUpBall();
         this.speedUpBall();
-        this.speedUpBall(); // Triple speed boost!
+        this.speedUpBall();
+        this.speedUpBall();
+        this.speedUpBall();
+        this.speedUpBall();
+        this.speedUpBall();
+        this.speedUpBall(); // 8x speed boost!
         this.powerHitPlayer = null; // Clear after use
       }
     }
