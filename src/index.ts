@@ -126,14 +126,15 @@ async function fetchPlayerProfile(walletAddress: string) {
  */
 async function fetchEquippedCosmetics(walletAddress: string) {
   try {
-    const response = await fetch(`https://bearpark.xyz/api/cosmetics/equipped/${walletAddress}`);
+    const response = await fetch(`https://www.bearpark.xyz/api/cosmetics/equipped/${walletAddress}`);
     const data = await response.json() as any;
 
     if (data.success) {
+      console.log(`✅ Fetched cosmetics for ${walletAddress}:`, data.equipped);
       return data.equipped;
     }
 
-    console.log(`⚠️ Failed to fetch cosmetics for ${walletAddress}`);
+    console.log(`⚠️ Failed to fetch cosmetics for ${walletAddress}:`, data);
     return { ring: null, banner: null };
   } catch (error) {
     console.error(`❌ Error fetching cosmetics for ${walletAddress}:`, error);
