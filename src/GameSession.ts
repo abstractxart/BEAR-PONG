@@ -428,11 +428,7 @@ export class GameSession {
           this.speedUpBall();
           this.speedUpBall();
           this.speedUpBall();
-          this.speedUpBall();
-          this.speedUpBall();
-          this.speedUpBall();
-          this.speedUpBall();
-          this.speedUpBall(); // 12x speed boost!
+          this.speedUpBall(); // 8x speed boost!
           this.powerHitPlayer = null; // Clear after use
         }
 
@@ -510,11 +506,7 @@ export class GameSession {
         this.speedUpBall();
         this.speedUpBall();
         this.speedUpBall();
-        this.speedUpBall();
-        this.speedUpBall();
-        this.speedUpBall();
-        this.speedUpBall();
-        this.speedUpBall(); // 12x speed boost!
+        this.speedUpBall(); // 8x speed boost!
         this.powerHitPlayer = null; // Clear after use
       }
     }
@@ -605,11 +597,7 @@ export class GameSession {
           this.speedUpBall();
           this.speedUpBall();
           this.speedUpBall();
-          this.speedUpBall();
-          this.speedUpBall();
-          this.speedUpBall();
-          this.speedUpBall();
-          this.speedUpBall(); // 12x speed boost!
+          this.speedUpBall(); // 8x speed boost!
           this.powerHitPlayer = null; // Clear after use
         }
 
@@ -687,11 +675,7 @@ export class GameSession {
         this.speedUpBall();
         this.speedUpBall();
         this.speedUpBall();
-        this.speedUpBall();
-        this.speedUpBall();
-        this.speedUpBall();
-        this.speedUpBall();
-        this.speedUpBall(); // 12x speed boost!
+        this.speedUpBall(); // 8x speed boost!
         this.powerHitPlayer = null; // Clear after use
       }
     }
