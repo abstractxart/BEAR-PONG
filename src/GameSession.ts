@@ -211,9 +211,9 @@ export class GameSession {
    * 🚀 TIME FREEZE: Reduce ball speed to 10% for 1.3 seconds (ULTRA SLOW-MO!)
    */
   private activateTimeFreeze() {
-    console.log('⏰ TIME FREEZE activated - ball speed reduced to 10% for 1.3 seconds');
+    console.log('⏰ TIME FREEZE activated - ball speed reduced to 3.33% for 1.3 seconds');
     this.timeFreezeActive = true;
-    this.ballSpeedMultiplier = 0.1; // ULTRA SLOW-MO (was 0.3)
+    this.ballSpeedMultiplier = 0.0333; // ULTRA SLOW-MO (3.33% speed)
     this.timeFreezeEndTime = Date.now() + 1300; // 1.3 seconds
   }
 
