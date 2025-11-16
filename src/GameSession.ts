@@ -378,16 +378,26 @@ export class GameSession {
 
         // 🔥 JUICE: PERFECT HIT ZONE (center 30% of paddle)
         const isPerfectHit = Math.abs(hitPosition) <= 0.15;
+        // 🎯 EDGE HIT ZONE (outer 30% of paddle for max angle control)
+        const isEdgeHit = Math.abs(hitPosition) >= 0.7;
+
         if (isPerfectHit) {
           console.log(`[PERFECT HIT!] Left paddle - Center shot! hitPosition=${hitPosition.toFixed(2)}`);
+        } else if (isEdgeHit) {
+          console.log(`[EDGE HIT!] Left paddle - Sharp angle! hitPosition=${hitPosition.toFixed(2)}`);
         }
 
-        // Spin strength scales with speed (gold/red = more horizontal bias)
-        const spinStrength = currentSpeed >= 10 ? 2 : 3; // Less spin at high speeds
+        // 🎯 Enhanced spin for edge hits - reward skilled positioning
+        let spinStrength = currentSpeed >= 10 ? 3 : 4; // Base spin strength
+        if (isEdgeHit) {
+          spinStrength *= 1.8; // 80% more spin on edge hits for skill expression
+          console.log(`[EDGE BOOST] Spin strength boosted to ${spinStrength.toFixed(1)}`);
+        }
+
         this.gameState.ballVelocityY += hitPosition * spinStrength;
 
-        // GODMODE FUN: Limit vertical velocity to prevent boring up/down bouncing
-        const MAX_Y_VELOCITY = currentSpeed >= 10 ? 4 : 6; // Gold/red: even more horizontal
+        // 🎯 Higher Y velocity cap to allow sharper angles from edge hits
+        const MAX_Y_VELOCITY = currentSpeed >= 10 ? 8 : 10; // Increased from 4/6 to allow sharper angles
         this.gameState.ballVelocityY = Math.max(-MAX_Y_VELOCITY, Math.min(MAX_Y_VELOCITY, this.gameState.ballVelocityY));
 
         // GODMODE FUN: Ensure minimum horizontal velocity (especially at high speeds)
@@ -445,15 +455,25 @@ export class GameSession {
 
       // 🔥 JUICE: PERFECT HIT ZONE (center 30% of paddle)
       const isPerfectHit = Math.abs(hitPosition) <= 0.15;
+      // 🎯 EDGE HIT ZONE (outer 30% of paddle for max angle control)
+      const isEdgeHit = Math.abs(hitPosition) >= 0.7;
+
       if (isPerfectHit) {
         console.log(`[PERFECT HIT!] Left paddle FAILSAFE - Center shot! hitPosition=${hitPosition.toFixed(2)}`);
+      } else if (isEdgeHit) {
+        console.log(`[EDGE HIT!] Left paddle FAILSAFE - Sharp angle! hitPosition=${hitPosition.toFixed(2)}`);
       }
 
-      const spinStrength = currentSpeed >= 10 ? 2 : 3;
+      // 🎯 Enhanced spin for edge hits
+      let spinStrength = currentSpeed >= 10 ? 3 : 4;
+      if (isEdgeHit) {
+        spinStrength *= 1.8; // 80% more spin on edge hits
+      }
+
       this.gameState.ballVelocityY += hitPosition * spinStrength;
 
-      // GODMODE FUN: Clamp Y velocity and ensure horizontal bias
-      const MAX_Y_VELOCITY = currentSpeed >= 10 ? 4 : 6;
+      // 🎯 Higher Y velocity cap for sharper angles
+      const MAX_Y_VELOCITY = currentSpeed >= 10 ? 8 : 10;
       this.gameState.ballVelocityY = Math.max(-MAX_Y_VELOCITY, Math.min(MAX_Y_VELOCITY, this.gameState.ballVelocityY));
 
       const MIN_X_VELOCITY = currentSpeed >= 10 ? currentSpeed * 0.75 : currentSpeed * 0.5;
@@ -519,16 +539,26 @@ export class GameSession {
 
         // 🔥 JUICE: PERFECT HIT ZONE (center 30% of paddle)
         const isPerfectHit = Math.abs(hitPosition) <= 0.15;
+        // 🎯 EDGE HIT ZONE (outer 30% of paddle for max angle control)
+        const isEdgeHit = Math.abs(hitPosition) >= 0.7;
+
         if (isPerfectHit) {
           console.log(`[PERFECT HIT!] Right paddle - Center shot! hitPosition=${hitPosition.toFixed(2)}`);
+        } else if (isEdgeHit) {
+          console.log(`[EDGE HIT!] Right paddle - Sharp angle! hitPosition=${hitPosition.toFixed(2)}`);
         }
 
-        // Spin strength scales with speed (gold/red = more horizontal bias)
-        const spinStrength = currentSpeed >= 10 ? 2 : 3; // Less spin at high speeds
+        // 🎯 Enhanced spin for edge hits - reward skilled positioning
+        let spinStrength = currentSpeed >= 10 ? 3 : 4; // Base spin strength
+        if (isEdgeHit) {
+          spinStrength *= 1.8; // 80% more spin on edge hits for skill expression
+          console.log(`[EDGE BOOST] Spin strength boosted to ${spinStrength.toFixed(1)}`);
+        }
+
         this.gameState.ballVelocityY += hitPosition * spinStrength;
 
-        // GODMODE FUN: Limit vertical velocity to prevent boring up/down bouncing
-        const MAX_Y_VELOCITY = currentSpeed >= 10 ? 4 : 6; // Gold/red: even more horizontal
+        // 🎯 Higher Y velocity cap to allow sharper angles from edge hits
+        const MAX_Y_VELOCITY = currentSpeed >= 10 ? 8 : 10; // Increased from 4/6 to allow sharper angles
         this.gameState.ballVelocityY = Math.max(-MAX_Y_VELOCITY, Math.min(MAX_Y_VELOCITY, this.gameState.ballVelocityY));
 
         // GODMODE FUN: Ensure minimum horizontal velocity (especially at high speeds)
@@ -586,15 +616,25 @@ export class GameSession {
 
       // 🔥 JUICE: PERFECT HIT ZONE (center 30% of paddle)
       const isPerfectHit = Math.abs(hitPosition) <= 0.15;
+      // 🎯 EDGE HIT ZONE (outer 30% of paddle for max angle control)
+      const isEdgeHit = Math.abs(hitPosition) >= 0.7;
+
       if (isPerfectHit) {
         console.log(`[PERFECT HIT!] Right paddle FAILSAFE - Center shot! hitPosition=${hitPosition.toFixed(2)}`);
+      } else if (isEdgeHit) {
+        console.log(`[EDGE HIT!] Right paddle FAILSAFE - Sharp angle! hitPosition=${hitPosition.toFixed(2)}`);
       }
 
-      const spinStrength = currentSpeed >= 10 ? 2 : 3;
+      // 🎯 Enhanced spin for edge hits
+      let spinStrength = currentSpeed >= 10 ? 3 : 4;
+      if (isEdgeHit) {
+        spinStrength *= 1.8; // 80% more spin on edge hits
+      }
+
       this.gameState.ballVelocityY += hitPosition * spinStrength;
 
-      // GODMODE FUN: Clamp Y velocity and ensure horizontal bias
-      const MAX_Y_VELOCITY = currentSpeed >= 10 ? 4 : 6;
+      // 🎯 Higher Y velocity cap for sharper angles
+      const MAX_Y_VELOCITY = currentSpeed >= 10 ? 8 : 10;
       this.gameState.ballVelocityY = Math.max(-MAX_Y_VELOCITY, Math.min(MAX_Y_VELOCITY, this.gameState.ballVelocityY));
 
       const MIN_X_VELOCITY = currentSpeed >= 10 ? currentSpeed * 0.75 : currentSpeed * 0.5;
