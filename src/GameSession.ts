@@ -394,7 +394,8 @@ export class GameSession {
           console.log(`[EDGE BOOST] Spin strength boosted to ${spinStrength.toFixed(1)}`);
 
           // 🎯 Broadcast edge hit to clients for visual effects
-          this.broadcast({ type: 'edge_hit', side: 'left', hitPosition });
+          this.sendToPlayer(this.player1.ws, { type: 'edge_hit', side: 'left', hitPosition });
+          this.sendToPlayer(this.player2.ws, { type: 'edge_hit', side: 'left', hitPosition });
         }
 
         this.gameState.ballVelocityY += hitPosition * spinStrength;
@@ -569,7 +570,8 @@ export class GameSession {
           console.log(`[EDGE BOOST] Spin strength boosted to ${spinStrength.toFixed(1)}`);
 
           // 🎯 Broadcast edge hit to clients for visual effects
-          this.broadcast({ type: 'edge_hit', side: 'right', hitPosition });
+          this.sendToPlayer(this.player1.ws, { type: 'edge_hit', side: 'right', hitPosition });
+          this.sendToPlayer(this.player2.ws, { type: 'edge_hit', side: 'right', hitPosition });
         }
 
         this.gameState.ballVelocityY += hitPosition * spinStrength;
@@ -701,7 +703,8 @@ export class GameSession {
       // 🔄 REFRESH POWER-UPS: Clear used ultimates so players can use them again
       this.player1UsedUltimates.clear();
       this.player2UsedUltimates.clear();
-      this.broadcast({ type: 'powerups_refreshed' });
+      this.sendToPlayer(this.player1.ws, { type: 'powerups_refreshed' });
+      this.sendToPlayer(this.player2.ws, { type: 'powerups_refreshed' });
       console.log('🔄 Power-ups refreshed for both players!');
 
       // Check for game over BEFORE starting countdown
@@ -721,7 +724,8 @@ export class GameSession {
       // 🔄 REFRESH POWER-UPS: Clear used ultimates so players can use them again
       this.player1UsedUltimates.clear();
       this.player2UsedUltimates.clear();
-      this.broadcast({ type: 'powerups_refreshed' });
+      this.sendToPlayer(this.player1.ws, { type: 'powerups_refreshed' });
+      this.sendToPlayer(this.player2.ws, { type: 'powerups_refreshed' });
       console.log('🔄 Power-ups refreshed for both players!');
 
       // Check for game over BEFORE starting countdown
