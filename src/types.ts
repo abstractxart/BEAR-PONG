@@ -67,6 +67,7 @@ export type ServerMessage =
   | { type: 'countdown'; count: number }
   | { type: 'game_state'; state: GameState }
   | { type: 'ultimate_activated'; side: 'left' | 'right'; abilityType: UltimateAbilityType }
+  | { type: 'edge_hit'; side: 'left' | 'right'; hitPosition: number }
   | { type: 'game_over'; winner: 'left' | 'right'; finalScore: { left: number; right: number }; betAmount: number }
   | { type: 'opponent_disconnected' }
   | { type: 'rematch_requested' }

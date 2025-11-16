@@ -392,6 +392,9 @@ export class GameSession {
         if (isEdgeHit) {
           spinStrength *= 1.8; // 80% more spin on edge hits for skill expression
           console.log(`[EDGE BOOST] Spin strength boosted to ${spinStrength.toFixed(1)}`);
+
+          // 🎯 Broadcast edge hit to clients for visual effects
+          this.broadcast({ type: 'edge_hit', side: 'left', hitPosition });
         }
 
         this.gameState.ballVelocityY += hitPosition * spinStrength;
@@ -468,6 +471,9 @@ export class GameSession {
       let spinStrength = currentSpeed >= 10 ? 3 : 4;
       if (isEdgeHit) {
         spinStrength *= 1.8; // 80% more spin on edge hits
+
+        // 🎯 Broadcast edge hit to clients for visual effects
+        this.broadcast({ type: 'edge_hit', side: 'left', hitPosition });
       }
 
       this.gameState.ballVelocityY += hitPosition * spinStrength;
@@ -553,6 +559,9 @@ export class GameSession {
         if (isEdgeHit) {
           spinStrength *= 1.8; // 80% more spin on edge hits for skill expression
           console.log(`[EDGE BOOST] Spin strength boosted to ${spinStrength.toFixed(1)}`);
+
+          // 🎯 Broadcast edge hit to clients for visual effects
+          this.broadcast({ type: 'edge_hit', side: 'right', hitPosition });
         }
 
         this.gameState.ballVelocityY += hitPosition * spinStrength;
@@ -629,6 +638,9 @@ export class GameSession {
       let spinStrength = currentSpeed >= 10 ? 3 : 4;
       if (isEdgeHit) {
         spinStrength *= 1.8; // 80% more spin on edge hits
+
+        // 🎯 Broadcast edge hit to clients for visual effects
+        this.broadcast({ type: 'edge_hit', side: 'right', hitPosition });
       }
 
       this.gameState.ballVelocityY += hitPosition * spinStrength;
