@@ -478,7 +478,8 @@ export class GameSession {
         spinStrength *= 1.8; // 80% more spin on edge hits
 
         // 🎯 Broadcast edge hit to clients for visual effects
-        this.broadcast({ type: 'edge_hit', side: 'left', hitPosition });
+        this.sendToPlayer(this.player1.ws, { type: 'edge_hit', side: 'left', hitPosition });
+        this.sendToPlayer(this.player2.ws, { type: 'edge_hit', side: 'left', hitPosition });
       }
 
       this.gameState.ballVelocityY += hitPosition * spinStrength;
@@ -654,7 +655,8 @@ export class GameSession {
         spinStrength *= 1.8; // 80% more spin on edge hits
 
         // 🎯 Broadcast edge hit to clients for visual effects
-        this.broadcast({ type: 'edge_hit', side: 'right', hitPosition });
+        this.sendToPlayer(this.player1.ws, { type: 'edge_hit', side: 'right', hitPosition });
+        this.sendToPlayer(this.player2.ws, { type: 'edge_hit', side: 'right', hitPosition });
       }
 
       this.gameState.ballVelocityY += hitPosition * spinStrength;
