@@ -274,14 +274,17 @@ function handlePaddleMove(ws: WebSocket, y: number) {
  * Handle player leaving
  */
 function handleLeave(ws: WebSocket) {
-  console.log('👋 Player requested to leave');
-  handleDisconnect(ws);
+  console.log('👋 Player requested to leave gracefully');
+  // ✅ FIX: Pass true for graceful leave - don't notify opponent
+  handleDisconnect(ws, true);
 }
 
 /**
  * Handle player disconnect
+ * @param ws - WebSocket of disconnecting player
+ * @param isGracefulLeave - If true, player intentionally left (don't notify opponent)
  */
-function handleDisconnect(ws: WebSocket) {
+function handleDisconnect(ws: WebSocket, isGracefulLeave: boolean = false) {
   // Remove from queue if present
   const queueIndex = matchmakingQueue.findIndex(p => p.ws === ws);
   if (queueIndex !== -1) {
@@ -292,7 +295,8 @@ function handleDisconnect(ws: WebSocket) {
   // Handle disconnect in active game
   const session = activeSessions.get(ws);
   if (session) {
-    session.handleDisconnect(ws);
+    // ✅ FIX: Pass graceful leave flag to session
+    session.handleDisconnect(ws, isGracefulLeave);
 
     // Remove both players from active sessions
     const players = session.getPlayers();
@@ -301,7 +305,7 @@ function handleDisconnect(ws: WebSocket) {
     });
 
     session.cleanup();
-    console.log('🎮 Game session ended due to disconnect');
+    console.log(`🎮 Game session ended due to ${isGracefulLeave ? 'graceful leave' : 'disconnect'}`);
   }
 }
 

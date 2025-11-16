@@ -835,9 +835,11 @@ export class GameSession {
 
   /**
    * Handle player disconnect
+   * @param playerWs - WebSocket of the disconnecting player
+   * @param isGracefulLeave - If true, player intentionally left (don't notify opponent)
    */
-  handleDisconnect(playerWs: WebSocket) {
-    console.log('👋 Player disconnected from game');
+  handleDisconnect(playerWs: WebSocket, isGracefulLeave: boolean = false) {
+    console.log(`👋 Player ${isGracefulLeave ? 'gracefully left' : 'disconnected from'} game`);
 
     // Stop game
     if (this.gameLoop) {
@@ -853,9 +855,15 @@ export class GameSession {
       this.bettingTimer = null;
     }
 
-    // Notify other player
-    const otherPlayer = playerWs === this.player1.ws ? this.player2 : this.player1;
-    this.sendToPlayer(otherPlayer.ws, { type: 'opponent_disconnected' });
+    // ✅ FIX: Only notify other player if this was an unexpected disconnect (crash)
+    // Don't notify if player intentionally left (clicked "Back to BEARpark" or "Tap to Retry")
+    if (!isGracefulLeave) {
+      const otherPlayer = playerWs === this.player1.ws ? this.player2 : this.player1;
+      this.sendToPlayer(otherPlayer.ws, { type: 'opponent_disconnected' });
+      console.log('📢 Notified opponent of disconnect');
+    } else {
+      console.log('✅ Graceful leave - opponent stays in game');
+    }
   }
 
   /**
