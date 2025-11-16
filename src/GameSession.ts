@@ -701,6 +701,7 @@ export class GameSession {
       // 🔄 REFRESH POWER-UPS: Clear used ultimates so players can use them again
       this.player1UsedUltimates.clear();
       this.player2UsedUltimates.clear();
+      this.broadcast({ type: 'powerups_refreshed' });
       console.log('🔄 Power-ups refreshed for both players!');
 
       // Check for game over BEFORE starting countdown
@@ -720,6 +721,7 @@ export class GameSession {
       // 🔄 REFRESH POWER-UPS: Clear used ultimates so players can use them again
       this.player1UsedUltimates.clear();
       this.player2UsedUltimates.clear();
+      this.broadcast({ type: 'powerups_refreshed' });
       console.log('🔄 Power-ups refreshed for both players!');
 
       // Check for game over BEFORE starting countdown
