@@ -208,13 +208,13 @@ export class GameSession {
   }
 
   /**
-   * 🚀 TIME FREEZE: Reduce ball speed to 10% for 4 seconds (ULTRA SLOW-MO!)
+   * 🚀 TIME FREEZE: Reduce ball speed to 10% for 1.3 seconds (ULTRA SLOW-MO!)
    */
   private activateTimeFreeze() {
-    console.log('⏰ TIME FREEZE activated - ball speed reduced to 10%');
+    console.log('⏰ TIME FREEZE activated - ball speed reduced to 10% for 1.3 seconds');
     this.timeFreezeActive = true;
     this.ballSpeedMultiplier = 0.1; // ULTRA SLOW-MO (was 0.3)
-    this.timeFreezeEndTime = Date.now() + 4000; // 4 seconds (was 3)
+    this.timeFreezeEndTime = Date.now() + 1300; // 1.3 seconds
   }
 
   /**
@@ -427,7 +427,11 @@ export class GameSession {
           this.speedUpBall();
           this.speedUpBall();
           this.speedUpBall();
-          this.speedUpBall(); // 8x speed boost!
+          this.speedUpBall();
+          this.speedUpBall();
+          this.speedUpBall();
+          this.speedUpBall();
+          this.speedUpBall(); // 12x speed boost!
           this.powerHitPlayer = null; // Clear after use
         }
 
@@ -504,7 +508,11 @@ export class GameSession {
         this.speedUpBall();
         this.speedUpBall();
         this.speedUpBall();
-        this.speedUpBall(); // 8x speed boost!
+        this.speedUpBall();
+        this.speedUpBall();
+        this.speedUpBall();
+        this.speedUpBall();
+        this.speedUpBall(); // 12x speed boost!
         this.powerHitPlayer = null; // Clear after use
       }
     }
@@ -594,7 +602,11 @@ export class GameSession {
           this.speedUpBall();
           this.speedUpBall();
           this.speedUpBall();
-          this.speedUpBall(); // 8x speed boost!
+          this.speedUpBall();
+          this.speedUpBall();
+          this.speedUpBall();
+          this.speedUpBall();
+          this.speedUpBall(); // 12x speed boost!
           this.powerHitPlayer = null; // Clear after use
         }
 
@@ -671,7 +683,11 @@ export class GameSession {
         this.speedUpBall();
         this.speedUpBall();
         this.speedUpBall();
-        this.speedUpBall(); // 8x speed boost!
+        this.speedUpBall();
+        this.speedUpBall();
+        this.speedUpBall();
+        this.speedUpBall();
+        this.speedUpBall(); // 12x speed boost!
         this.powerHitPlayer = null; // Clear after use
       }
     }
@@ -681,6 +697,11 @@ export class GameSession {
       // Player 2 scored (ball went off left)
       this.gameState.score2++;
       console.log(`🎯 Player 2 scored! Score: ${this.gameState.score1} - ${this.gameState.score2}`);
+
+      // 🔄 REFRESH POWER-UPS: Clear used ultimates so players can use them again
+      this.player1UsedUltimates.clear();
+      this.player2UsedUltimates.clear();
+      console.log('🔄 Power-ups refreshed for both players!');
 
       // Check for game over BEFORE starting countdown
       if (this.gameState.score2 >= GAME_CONFIG.WINNING_SCORE) {
@@ -695,6 +716,11 @@ export class GameSession {
       // Player 1 scored (ball went off right)
       this.gameState.score1++;
       console.log(`🎯 Player 1 scored! Score: ${this.gameState.score1} - ${this.gameState.score2}`);
+
+      // 🔄 REFRESH POWER-UPS: Clear used ultimates so players can use them again
+      this.player1UsedUltimates.clear();
+      this.player2UsedUltimates.clear();
+      console.log('🔄 Power-ups refreshed for both players!');
 
       // Check for game over BEFORE starting countdown
       if (this.gameState.score1 >= GAME_CONFIG.WINNING_SCORE) {
