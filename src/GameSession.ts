@@ -388,7 +388,7 @@ export class GameSession {
         }
 
         // 🎯 Enhanced spin for edge hits - reward skilled positioning
-        let spinStrength = currentSpeed >= 10 ? 3 : 4; // Base spin strength
+        let spinStrength = currentSpeed >= 10 ? 2 : 3; // Base spin strength (reduced impact)
         if (isEdgeHit) {
           spinStrength *= 1.8; // 80% more spin on edge hits for skill expression
           console.log(`[EDGE BOOST] Spin strength boosted to ${spinStrength.toFixed(1)}`);
@@ -404,8 +404,8 @@ export class GameSession {
         const MAX_Y_VELOCITY = currentSpeed >= 10 ? 8 : 10; // Increased from 4/6 to allow sharper angles
         this.gameState.ballVelocityY = Math.max(-MAX_Y_VELOCITY, Math.min(MAX_Y_VELOCITY, this.gameState.ballVelocityY));
 
-        // GODMODE FUN: Ensure minimum horizontal velocity (especially at high speeds)
-        const MIN_X_VELOCITY = currentSpeed >= 10 ? currentSpeed * 0.75 : currentSpeed * 0.5;
+        // GODMODE FUN: Ensure minimum horizontal velocity (ball never slows down on hit)
+        const MIN_X_VELOCITY = currentSpeed; // Ball maintains at least current speed
         if (Math.abs(this.gameState.ballVelocityX) < MIN_X_VELOCITY) {
           this.gameState.ballVelocityX = Math.sign(this.gameState.ballVelocityX) * MIN_X_VELOCITY;
         }
@@ -469,7 +469,7 @@ export class GameSession {
       }
 
       // 🎯 Enhanced spin for edge hits
-      let spinStrength = currentSpeed >= 10 ? 3 : 4;
+      let spinStrength = currentSpeed >= 10 ? 2 : 3; // Base spin strength (reduced impact)
       if (isEdgeHit) {
         spinStrength *= 1.8; // 80% more spin on edge hits
 
@@ -484,7 +484,7 @@ export class GameSession {
       const MAX_Y_VELOCITY = currentSpeed >= 10 ? 8 : 10;
       this.gameState.ballVelocityY = Math.max(-MAX_Y_VELOCITY, Math.min(MAX_Y_VELOCITY, this.gameState.ballVelocityY));
 
-      const MIN_X_VELOCITY = currentSpeed >= 10 ? currentSpeed * 0.75 : currentSpeed * 0.5;
+      const MIN_X_VELOCITY = currentSpeed; // Ball maintains at least current speed
       if (Math.abs(this.gameState.ballVelocityX) < MIN_X_VELOCITY) {
         this.gameState.ballVelocityX = Math.sign(this.gameState.ballVelocityX) * MIN_X_VELOCITY;
       }
@@ -557,7 +557,7 @@ export class GameSession {
         }
 
         // 🎯 Enhanced spin for edge hits - reward skilled positioning
-        let spinStrength = currentSpeed >= 10 ? 3 : 4; // Base spin strength
+        let spinStrength = currentSpeed >= 10 ? 2 : 3; // Base spin strength (reduced impact)
         if (isEdgeHit) {
           spinStrength *= 1.8; // 80% more spin on edge hits for skill expression
           console.log(`[EDGE BOOST] Spin strength boosted to ${spinStrength.toFixed(1)}`);
@@ -573,8 +573,8 @@ export class GameSession {
         const MAX_Y_VELOCITY = currentSpeed >= 10 ? 8 : 10; // Increased from 4/6 to allow sharper angles
         this.gameState.ballVelocityY = Math.max(-MAX_Y_VELOCITY, Math.min(MAX_Y_VELOCITY, this.gameState.ballVelocityY));
 
-        // GODMODE FUN: Ensure minimum horizontal velocity (especially at high speeds)
-        const MIN_X_VELOCITY = currentSpeed >= 10 ? currentSpeed * 0.75 : currentSpeed * 0.5;
+        // GODMODE FUN: Ensure minimum horizontal velocity (ball never slows down on hit)
+        const MIN_X_VELOCITY = currentSpeed; // Ball maintains at least current speed
         if (Math.abs(this.gameState.ballVelocityX) < MIN_X_VELOCITY) {
           this.gameState.ballVelocityX = Math.sign(this.gameState.ballVelocityX) * MIN_X_VELOCITY;
         }
@@ -638,7 +638,7 @@ export class GameSession {
       }
 
       // 🎯 Enhanced spin for edge hits
-      let spinStrength = currentSpeed >= 10 ? 3 : 4;
+      let spinStrength = currentSpeed >= 10 ? 2 : 3; // Base spin strength (reduced impact)
       if (isEdgeHit) {
         spinStrength *= 1.8; // 80% more spin on edge hits
 
@@ -653,7 +653,7 @@ export class GameSession {
       const MAX_Y_VELOCITY = currentSpeed >= 10 ? 8 : 10;
       this.gameState.ballVelocityY = Math.max(-MAX_Y_VELOCITY, Math.min(MAX_Y_VELOCITY, this.gameState.ballVelocityY));
 
-      const MIN_X_VELOCITY = currentSpeed >= 10 ? currentSpeed * 0.75 : currentSpeed * 0.5;
+      const MIN_X_VELOCITY = currentSpeed; // Ball maintains at least current speed
       if (Math.abs(this.gameState.ballVelocityX) < MIN_X_VELOCITY) {
         this.gameState.ballVelocityX = Math.sign(this.gameState.ballVelocityX) * MIN_X_VELOCITY;
       }
