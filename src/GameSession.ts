@@ -350,14 +350,23 @@ export class GameSession {
     const paddle1Bottom = this.gameState.paddle1Y + GAME_CONFIG.PADDLE_HEIGHT / 2;
 
     // TIER 1: Check if ball crossed the paddle's X boundary (SWEPT DETECTION)
+    // 🛡️ ANTI-TUNNEL FIX: Removed the check that ball must start outside paddle
+    // Now catches balls moving at ANY speed, even if they jump entire paddle width
     let leftPaddleHit = false;
     if (
       this.gameState.ballVelocityX < 0 && // Moving left
-      this.prevBallX - GAME_CONFIG.BALL_SIZE / 2 > paddle1Right && // Was to the right
       this.gameState.ballX - GAME_CONFIG.BALL_SIZE / 2 <= paddle1Right + COLLISION_PADDING // Now at or past paddle (with padding)
     ) {
-      // Calculate Y position when ball crosses paddle's X
-      const t = (paddle1Right - (this.prevBallX - GAME_CONFIG.BALL_SIZE / 2)) / this.gameState.ballVelocityX;
+      // Calculate Y position when ball crosses paddle's X plane
+      // Use absolute distance traveled to ensure positive t value
+      const ballLeftEdge = this.gameState.ballX - GAME_CONFIG.BALL_SIZE / 2;
+      const prevBallLeftEdge = this.prevBallX - GAME_CONFIG.BALL_SIZE / 2;
+
+      // Calculate interpolation factor (0 to 1) for when ball crosses paddle face
+      const distanceTraveled = prevBallLeftEdge - ballLeftEdge; // Always positive when moving left
+      const distanceToPaddle = prevBallLeftEdge - paddle1Right;
+      const t = Math.max(0, Math.min(1, distanceToPaddle / distanceTraveled));
+
       const crossY = this.prevBallY + (this.gameState.ballVelocityY * t);
 
       // Check if Y position is within paddle bounds (EXACT - no padding on Y axis!)
@@ -511,6 +520,62 @@ export class GameSession {
       }
     }
 
+    // 🛡️ SUPER-FAILSAFE: Catch balls that have COMPLETELY PASSED THROUGH left paddle
+    // This handles extreme cases where ball jumps so far it skips ALL detection zones
+    if (
+      !leftPaddleHit && // Haven't registered a hit yet
+      this.gameState.ballVelocityX < 0 && // Moving left
+      this.gameState.ballX < paddle1Right && // Ball is now PAST the paddle (to the left)
+      this.prevBallX >= paddle1Left // Ball WAS in front of or intersecting paddle last frame
+    ) {
+      // Check if ball's path intersected paddle's Y range at ANY point
+      const ballTopNow = this.gameState.ballY - GAME_CONFIG.BALL_SIZE / 2;
+      const ballBottomNow = this.gameState.ballY + GAME_CONFIG.BALL_SIZE / 2;
+      const ballTopPrev = this.prevBallY - GAME_CONFIG.BALL_SIZE / 2;
+      const ballBottomPrev = this.prevBallY + GAME_CONFIG.BALL_SIZE / 2;
+
+      // Check if ball's Y range (current or previous) overlaps paddle's Y range
+      const currentOverlap = ballBottomNow >= paddle1Top && ballTopNow <= paddle1Bottom;
+      const prevOverlap = ballBottomPrev >= paddle1Top && ballTopPrev <= paddle1Bottom;
+
+      if (currentOverlap || prevOverlap) {
+        console.log(`[SUPER-FAILSAFE] Left paddle - Ball tunneled through! Forcing bounce. ballX=${this.gameState.ballX.toFixed(1)}, prevBallX=${this.prevBallX.toFixed(1)}`);
+
+        // FORCE BOUNCE - Ball hit the paddle but tunneled through
+        this.gameState.ballVelocityX = Math.abs(this.gameState.ballVelocityX);
+        this.gameState.ballX = paddle1Right + GAME_CONFIG.BALL_SIZE / 2 + 2;
+
+        // Add spin based on current Y position
+        const paddleCenter = (paddle1Top + paddle1Bottom) / 2;
+        const hitPosition = (this.gameState.ballY - paddleCenter) / (GAME_CONFIG.PADDLE_HEIGHT / 2);
+        let spinStrength = currentSpeed >= 10 ? 1.05 : 1.575;
+        this.gameState.ballVelocityY += hitPosition * spinStrength;
+
+        const MAX_Y_VELOCITY = currentSpeed >= 10 ? 8 : 10;
+        this.gameState.ballVelocityY = Math.max(-MAX_Y_VELOCITY, Math.min(MAX_Y_VELOCITY, this.gameState.ballVelocityY));
+
+        const MIN_X_VELOCITY = currentSpeed;
+        if (Math.abs(this.gameState.ballVelocityX) < MIN_X_VELOCITY) {
+          this.gameState.ballVelocityX = Math.sign(this.gameState.ballVelocityX) * MIN_X_VELOCITY;
+        }
+
+        this.speedUpBall();
+
+        if (this.powerHitPlayer === 1) {
+          console.log('💥 POWER HIT triggered on left paddle SUPER-FAILSAFE - INSANE SPEED BOOST!');
+          this.speedUpBall();
+          this.speedUpBall();
+          this.speedUpBall();
+          this.speedUpBall();
+          this.speedUpBall();
+          this.speedUpBall();
+          this.speedUpBall();
+          this.speedUpBall();
+          this.powerHitPlayer = null;
+        }
+      }
+    }
+
     // Right paddle (player 2) - positioned at right edge
     const paddle2Left = GAME_CONFIG.CANVAS_WIDTH - 50 - GAME_CONFIG.PADDLE_WIDTH;
     const paddle2Right = paddle2Left + GAME_CONFIG.PADDLE_WIDTH;
@@ -519,14 +584,23 @@ export class GameSession {
     const paddle2Bottom = this.gameState.paddle2Y + GAME_CONFIG.PADDLE_HEIGHT / 2;
 
     // TIER 1: Check if ball crossed the paddle's X boundary (SWEPT DETECTION)
+    // 🛡️ ANTI-TUNNEL FIX: Removed the check that ball must start outside paddle
+    // Now catches balls moving at ANY speed, even if they jump entire paddle width
     let rightPaddleHit = false;
     if (
       this.gameState.ballVelocityX > 0 && // Moving right
-      this.prevBallX + GAME_CONFIG.BALL_SIZE / 2 < paddle2Left && // Was to the left
       this.gameState.ballX + GAME_CONFIG.BALL_SIZE / 2 >= paddle2Left - COLLISION_PADDING // Now at or past paddle (with padding)
     ) {
-      // Calculate Y position when ball crosses paddle's X
-      const t = (paddle2Left - (this.prevBallX + GAME_CONFIG.BALL_SIZE / 2)) / this.gameState.ballVelocityX;
+      // Calculate Y position when ball crosses paddle's X plane
+      // Use absolute distance traveled to ensure positive t value
+      const ballRightEdge = this.gameState.ballX + GAME_CONFIG.BALL_SIZE / 2;
+      const prevBallRightEdge = this.prevBallX + GAME_CONFIG.BALL_SIZE / 2;
+
+      // Calculate interpolation factor (0 to 1) for when ball crosses paddle face
+      const distanceTraveled = ballRightEdge - prevBallRightEdge; // Always positive when moving right
+      const distanceToPaddle = paddle2Left - prevBallRightEdge;
+      const t = Math.max(0, Math.min(1, distanceToPaddle / distanceTraveled));
+
       const crossY = this.prevBallY + (this.gameState.ballVelocityY * t);
 
       // Check if Y position is within paddle bounds (EXACT - no padding on Y axis!)
@@ -677,6 +751,62 @@ export class GameSession {
         this.speedUpBall();
         this.speedUpBall(); // 8x speed boost!
         this.powerHitPlayer = null; // Clear after use
+      }
+    }
+
+    // 🛡️ SUPER-FAILSAFE: Catch balls that have COMPLETELY PASSED THROUGH right paddle
+    // This handles extreme cases where ball jumps so far it skips ALL detection zones
+    if (
+      !rightPaddleHit && // Haven't registered a hit yet
+      this.gameState.ballVelocityX > 0 && // Moving right
+      this.gameState.ballX > paddle2Left && // Ball is now PAST the paddle (to the right)
+      this.prevBallX <= paddle2Right // Ball WAS in front of or intersecting paddle last frame
+    ) {
+      // Check if ball's path intersected paddle's Y range at ANY point
+      const ballTopNow = this.gameState.ballY - GAME_CONFIG.BALL_SIZE / 2;
+      const ballBottomNow = this.gameState.ballY + GAME_CONFIG.BALL_SIZE / 2;
+      const ballTopPrev = this.prevBallY - GAME_CONFIG.BALL_SIZE / 2;
+      const ballBottomPrev = this.prevBallY + GAME_CONFIG.BALL_SIZE / 2;
+
+      // Check if ball's Y range (current or previous) overlaps paddle's Y range
+      const currentOverlap = ballBottomNow >= paddle2Top && ballTopNow <= paddle2Bottom;
+      const prevOverlap = ballBottomPrev >= paddle2Top && ballTopPrev <= paddle2Bottom;
+
+      if (currentOverlap || prevOverlap) {
+        console.log(`[SUPER-FAILSAFE] Right paddle - Ball tunneled through! Forcing bounce. ballX=${this.gameState.ballX.toFixed(1)}, prevBallX=${this.prevBallX.toFixed(1)}`);
+
+        // FORCE BOUNCE - Ball hit the paddle but tunneled through
+        this.gameState.ballVelocityX = -Math.abs(this.gameState.ballVelocityX);
+        this.gameState.ballX = paddle2Left - GAME_CONFIG.BALL_SIZE / 2 - 2;
+
+        // Add spin based on current Y position
+        const paddleCenter = (paddle2Top + paddle2Bottom) / 2;
+        const hitPosition = (this.gameState.ballY - paddleCenter) / (GAME_CONFIG.PADDLE_HEIGHT / 2);
+        let spinStrength = currentSpeed >= 10 ? 1.05 : 1.575;
+        this.gameState.ballVelocityY += hitPosition * spinStrength;
+
+        const MAX_Y_VELOCITY = currentSpeed >= 10 ? 8 : 10;
+        this.gameState.ballVelocityY = Math.max(-MAX_Y_VELOCITY, Math.min(MAX_Y_VELOCITY, this.gameState.ballVelocityY));
+
+        const MIN_X_VELOCITY = currentSpeed;
+        if (Math.abs(this.gameState.ballVelocityX) < MIN_X_VELOCITY) {
+          this.gameState.ballVelocityX = Math.sign(this.gameState.ballVelocityX) * MIN_X_VELOCITY;
+        }
+
+        this.speedUpBall();
+
+        if (this.powerHitPlayer === 2) {
+          console.log('💥 POWER HIT triggered on right paddle SUPER-FAILSAFE - INSANE SPEED BOOST!');
+          this.speedUpBall();
+          this.speedUpBall();
+          this.speedUpBall();
+          this.speedUpBall();
+          this.speedUpBall();
+          this.speedUpBall();
+          this.speedUpBall();
+          this.speedUpBall();
+          this.powerHitPlayer = null;
+        }
       }
     }
 
