@@ -388,7 +388,7 @@ export class GameSession {
         }
 
         // 🎯 Enhanced spin for edge hits - reward skilled positioning
-        let spinStrength = currentSpeed >= 10 ? 2 : 3; // Base spin strength (reduced impact)
+        let spinStrength = currentSpeed >= 10 ? 1.5 : 2.25; // Base spin strength (25% reduced)
         if (isEdgeHit) {
           spinStrength *= 1.8; // 80% more spin on edge hits for skill expression
           console.log(`[EDGE BOOST] Spin strength boosted to ${spinStrength.toFixed(1)}`);
@@ -469,7 +469,7 @@ export class GameSession {
       }
 
       // 🎯 Enhanced spin for edge hits
-      let spinStrength = currentSpeed >= 10 ? 2 : 3; // Base spin strength (reduced impact)
+      let spinStrength = currentSpeed >= 10 ? 1.5 : 2.25; // Base spin strength (25% reduced)
       if (isEdgeHit) {
         spinStrength *= 1.8; // 80% more spin on edge hits
 
@@ -557,7 +557,7 @@ export class GameSession {
         }
 
         // 🎯 Enhanced spin for edge hits - reward skilled positioning
-        let spinStrength = currentSpeed >= 10 ? 2 : 3; // Base spin strength (reduced impact)
+        let spinStrength = currentSpeed >= 10 ? 1.5 : 2.25; // Base spin strength (25% reduced)
         if (isEdgeHit) {
           spinStrength *= 1.8; // 80% more spin on edge hits for skill expression
           console.log(`[EDGE BOOST] Spin strength boosted to ${spinStrength.toFixed(1)}`);
@@ -638,7 +638,7 @@ export class GameSession {
       }
 
       // 🎯 Enhanced spin for edge hits
-      let spinStrength = currentSpeed >= 10 ? 2 : 3; // Base spin strength (reduced impact)
+      let spinStrength = currentSpeed >= 10 ? 1.5 : 2.25; // Base spin strength (25% reduced)
       if (isEdgeHit) {
         spinStrength *= 1.8; // 80% more spin on edge hits
 
