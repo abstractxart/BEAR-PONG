@@ -31,7 +31,7 @@
  * simply ignore the new fields and messages.
  */
 import { GAME_CONFIG, GameState, PlayerData, SERVER_PROTOCOL, UltimateAbilityType } from './types.js';
-import { applyCurve, RANKED_CURVE, spinFromSwing } from './curve.js';
+import { applyCurve, BULLSEYE, englishFor, RANKED_CURVE, spinFromSwing, wallBounce } from './curve.js';
 import type { WebSocket } from 'ws';
 
 type Seat = 1 | 2;
@@ -352,11 +352,14 @@ export class GameSession {
     this.gameState.ballX += this.gameState.ballVelocityX * scale;
     this.gameState.ballY += this.gameState.ballVelocityY * scale;
 
-    // top/bottom walls
+    // top/bottom walls - with THE KICK: a spinning ball skids on or checks up
     if (this.gameState.ballY <= R || this.gameState.ballY >= GAME_CONFIG.CANVAS_HEIGHT - R) {
-      this.gameState.ballVelocityY *= -1;
+      const wall: 1 | -1 = this.gameState.ballY >= GAME_CONFIG.CANVAS_HEIGHT - R ? 1 : -1;
+      const v = { vx: this.gameState.ballVelocityX, vy: this.gameState.ballVelocityY };
+      this.ballSpin = wallBounce(v, this.ballSpin, RANKED_CURVE, wall, GAME_CONFIG.MAX_BALL_SPEED).spin;
+      this.gameState.ballVelocityX = v.vx;
+      this.gameState.ballVelocityY = v.vy;
       this.gameState.ballY = Math.max(R, Math.min(GAME_CONFIG.CANVAS_HEIGHT - R, this.gameState.ballY));
-      this.ballSpin *= RANKED_CURVE.wallKeep;
     }
 
     // the paddle faces (swept: any speed)
@@ -437,6 +440,7 @@ export class GameSession {
     const speed = Math.hypot(this.gameState.ballVelocityX, this.gameState.ballVelocityY);
     const hitPosition = Math.max(-1, Math.min(1, (c.crossY - paddleY) / (this.height(seat) / 2)));
     const isPerfectHit = Math.abs(hitPosition) <= 0.15; // centre 30%: double speed-up
+    const isBullseye = Math.abs(hitPosition) <= BULLSEYE; // dead centre: one more
     const isEdgeHit = Math.abs(hitPosition) >= 0.7; // outer 30%: sharp angle
     const dir = seat === 1 ? 1 : -1;
     const side: 'left' | 'right' = seat === 1 ? 'left' : 'right';
@@ -444,13 +448,16 @@ export class GameSession {
     this.gameState.ballVelocityX = dir * Math.abs(this.gameState.ballVelocityX);
     let spinStrength = speed >= 10 ? 1.05 : 1.575;
     if (isEdgeHit) spinStrength *= 1.8;
-    this.gameState.ballVelocityY += hitPosition * spinStrength;
+    // ENGLISH: the face drags the ball the way the defender's paddle was moving
+    const swing = this.swingVelocity(seat);
+    this.gameState.ballVelocityY += hitPosition * spinStrength + englishFor(swing, RANKED_CURVE);
     const MAX_Y_VELOCITY = speed >= 10 ? 8 : 10;
     this.gameState.ballVelocityY = Math.max(-MAX_Y_VELOCITY, Math.min(MAX_Y_VELOCITY, this.gameState.ballVelocityY));
     if (Math.abs(this.gameState.ballVelocityX) < speed) this.gameState.ballVelocityX = dir * speed;
 
     this.speedUpBall();
     if (isPerfectHit) this.speedUpBall();
+    if (isBullseye) this.speedUpBall();
     const power = this.powerHitPlayer === seat;
     if (power) {
       this.speedUpBall();
@@ -460,7 +467,7 @@ export class GameSession {
     }
 
     // BEAR CURVE: the swing through the ball
-    this.ballSpin = spinFromSwing(this.swingVelocity(seat), RANKED_CURVE);
+    this.ballSpin = spinFromSwing(swing, RANKED_CURVE);
     this.ballAge = 0;
     this.passed = null;
 
@@ -473,6 +480,7 @@ export class GameSession {
       side,
       hitPosition,
       perfect: isPerfectHit,
+      bullseye: isBullseye,
       edge: isEdgeHit,
       power,
       spin: this.ballSpin,

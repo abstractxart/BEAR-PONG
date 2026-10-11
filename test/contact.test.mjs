@@ -132,14 +132,57 @@ test("BEAR CURVE: a hard swing through contact puts spin on the ball, the way it
   assert.equal(hits(t.a)[0].spin, 0);
 });
 
-test("the speed and angle rules are the original ones (PERFECT = two speed-ups)", () => {
+test("the speed rules: PERFECT = two speed-ups, BULLSEYE (dead centre) = three", () => {
   const { s, a } = session();
   s.updatePaddlePosition(a, 360, clock);
-  aim(s, { x: LEFT_FACE + 10, y: 360, vx: -12 });
+  aim(s, { x: LEFT_FACE + 10, y: 366, vx: -12 }); // 6px off: PERFECT, not a bullseye
   tick(s);
   const h = hits(a)[0];
   assert.equal(h.perfect, true);
+  assert.equal(h.bullseye, false);
   assert.ok(Math.abs(Math.abs(s.gameState.ballVelocityX) - 12 * 1.035 * 1.035) < 1e-6);
+  s.cleanup();
+  const t = session();
+  t.s.updatePaddlePosition(t.a, 360, clock);
+  aim(t.s, { x: LEFT_FACE + 10, y: 361, vx: -12 }); // 1px: dead centre
+  tick(t.s);
+  assert.equal(hits(t.a)[0].bullseye, true);
+  assert.ok(Math.abs(Math.abs(t.s.gameState.ballVelocityX) - 12 * 1.035 ** 3) < 1e-6);
+  t.s.cleanup();
+});
+
+test("ENGLISH: the defender's paddle motion steers the return", () => {
+  const run = (moving) => {
+    const { s, a } = session();
+    // a paddle sweeping UP the screen into the ball (y falling), or parked
+    for (let i = 0; i < 6; i++) {
+      s.updatePaddlePosition(a, moving ? 390 - i * 6 : 360, clock);
+      clock += 1000 / 60;
+    }
+    aim(s, { x: LEFT_FACE + 10, y: 370, vx: -12 });
+    tick(s);
+    const vy = s.gameState.ballVelocityY;
+    s.cleanup();
+    return vy;
+  };
+  assert.ok(run(true) < run(false) - 0.4, "swept up: the return goes up");
+});
+
+test("THE KICK: a spinning ball bending into a wall skids off faster; against it, checks up", () => {
+  const run = (spin) => {
+    const { s } = session();
+    aim(s, { x: 640, y: 720 - 12, vx: 10, vy: 6 }); // crosses the wall this tick, bent or not
+    s.ballSpin = spin;
+    s.ballAge = 100;
+    tick(s);
+    const vx = s.gameState.ballVelocityX;
+    s.cleanup();
+    return vx;
+  };
+  const plain = run(0);
+  assert.ok(run(0.012) > plain + 0.5, "topspin into the bottom wall skids on");
+  assert.ok(run(-0.012) < plain - 0.3, "backspin checks up");
+  assert.ok(Math.abs(plain - 10) < 1e-9);
 });
 
 test("start() can never run twice (the old double game loop)", () => {

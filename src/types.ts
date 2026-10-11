@@ -73,7 +73,7 @@ export type ServerMessage =
   | { type: 'queue_joined'; position: number }
   | { type: 'match_found'; opponent: PlayerData; yourSide: 'left' | 'right'; serverVersion?: number }
   | { type: 'ping'; t: number }
-  | { type: 'paddle_hit'; side: 'left' | 'right'; hitPosition: number; perfect: boolean; edge: boolean; power: boolean; spin: number; x: number; y: number; late: number }
+  | { type: 'paddle_hit'; side: 'left' | 'right'; hitPosition: number; perfect: boolean; bullseye: boolean; edge: boolean; power: boolean; spin: number; x: number; y: number; late: number }
   | { type: 'opponent_bet_set'; amount: number }
   | { type: 'opponent_ready' }
   | { type: 'final_bet_amount'; amount: number }
