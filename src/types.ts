@@ -49,6 +49,8 @@ export interface GameState {
   ballSpin?: number;
   /** the ball is held at a paddle face: hit-stop, or awaiting a late paddle */
   hold?: boolean;
+  /** THE SQUEEZE: the reported paddle heights are the real hitboxes */
+  squeeze?: boolean;
 }
 
 // Ultimate ability types
@@ -93,14 +95,14 @@ export const GAME_CONFIG = {
   CANVAS_HEIGHT: 720,
   PADDLE_WIDTH: 20,
   PADDLE_HEIGHT: 120,
-  MIN_PADDLE_HEIGHT: 40,  // 🔥 33% of original (120 * 0.33 ≈ 40)
+  MIN_PADDLE_HEIGHT: 66,  // THE SQUEEZE bottoms out at 55% of the full paddle
   BALL_SIZE: 20,
   PADDLE_SPEED: 13,  // 🚀 Increased from 10 for faster paddle response
   PADDLE_MAX_VELOCITY: 45,  // 🚀 Increased from 35 for snappier movement
   INITIAL_BALL_SPEED: 8,  // 🚀 Increased from 6 for faster-paced gameplay
   BALL_SPEED_INCREMENT: 0.035,  // 🔥 3.5% speed increase per hit - Smoother escalation (35 hits to max)
   MAX_BALL_SPEED: 27,  // 🚀 Reduced from 35 to 27 for better playability
-  PADDLE_SHRINK_PER_HIT: 3,  // 🔥 Paddle shrinks by 3px per rally hit
+  PADDLE_SHRINK_PER_HIT: 2.5,  // THE SQUEEZE: every return costs both paddles 2.5px, until the point ends
   WINNING_SCORE: 3,
   TICK_RATE: 60, // Server updates per second
   COUNTDOWN_DURATION: 3,

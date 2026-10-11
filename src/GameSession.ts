@@ -58,10 +58,9 @@ const R = GAME_CONFIG.BALL_SIZE / 2;
 /** where the ball's CENTRE touches each face */
 const LEFT_FACE = 50 + GAME_CONFIG.PADDLE_WIDTH + R;
 const RIGHT_FACE = GAME_CONFIG.CANVAS_WIDTH - 50 - GAME_CONFIG.PADDLE_WIDTH - R;
-/** the paddle that collides is always the full 120 (the reported heights are cosmetic) */
-const REACH = GAME_CONFIG.PADDLE_HEIGHT / 2 + R;
-
 const HITSTOP_MS = 34;
+/** PERFECT and POWER returns hold longer. (EDGE used to as well, but edge
+ *  saves are the fast scrambles - a long hold there broke an expert's rhythm.) */
 const BIG_HITSTOP_MS = 75;
 const GRACE = {
   /** added to the defender's round trip: the paddle sample can arrive a little late */
@@ -254,7 +253,7 @@ export class GameSession {
 
   /** 🚀 PADDLE DASH: teleport the paddle to the ball's Y */
   private activatePaddleDash(isPlayer1: boolean) {
-    const y = this.clampPaddle(this.gameState.ballY);
+    const y = this.clampPaddle(this.gameState.ballY, isPlayer1 ? 1 : 2);
     if (isPlayer1) this.gameState.paddle1Y = y;
     else this.gameState.paddle2Y = y;
     this.samples[isPlayer1 ? 1 : 2].push({ at: Date.now(), ct: Date.now(), y });
@@ -385,11 +384,12 @@ export class GameSession {
     this.gameState.ballY = crossY;
 
     const paddleY = seat === 1 ? this.gameState.paddle1Y : this.gameState.paddle2Y;
+    const reach = this.reach(seat);
     // a paddle that cannot possibly get there in time: no wait, straight through
-    const far = Math.abs(crossY - paddleY) - REACH > GRACE.reach;
+    const far = Math.abs(crossY - paddleY) - reach > GRACE.reach;
     this.contact = { seat, face, crossY, since: now, deadline: now + (far ? 0 : this.graceMs(seat)), hitAt: null, releaseAt: 0 };
 
-    if (Math.abs(crossY - paddleY) <= REACH) this.strike(seat, paddleY, now);
+    if (Math.abs(crossY - paddleY) <= reach) this.strike(seat, paddleY, now);
     else if (far) this.letThrough(seat);
   }
 
@@ -404,7 +404,8 @@ export class GameSession {
     // Late paddle: anything the defender sent in the window that covers it.
     // (A sample that left them as they SAW the ball arrive lands one round
     // trip after the touch - inside the window.)
-    const s = this.samples[c.seat].find((p) => p.at >= c.since - 20 && Math.abs(c.crossY - p.y) <= REACH);
+    const reach = this.reach(c.seat);
+    const s = this.samples[c.seat].find((p) => p.at >= c.since - 20 && Math.abs(c.crossY - p.y) <= reach);
     if (s) {
       this.strike(c.seat, s.y, now);
       return true;
@@ -412,6 +413,16 @@ export class GameSession {
     if (now < c.deadline) return true;
     this.letThrough(c.seat); // no save: on through the line, this very tick
     return false;
+  }
+
+  /** A paddle's real height right now (THE SQUEEZE shrinks it through a rally). */
+  private height(seat: Seat): number {
+    return seat === 1 ? this.gameState.paddle1Height : this.gameState.paddle2Height;
+  }
+
+  /** How far from a paddle's centre the ball's centre can be and still be hit. */
+  private reach(seat: Seat): number {
+    return this.height(seat) / 2 + R;
   }
 
   /** No paddle: the ball carries on through the face to the goal line. */
@@ -424,7 +435,7 @@ export class GameSession {
   private strike(seat: Seat, paddleY: number, now: number) {
     const c = this.contact!;
     const speed = Math.hypot(this.gameState.ballVelocityX, this.gameState.ballVelocityY);
-    const hitPosition = Math.max(-1, Math.min(1, (c.crossY - paddleY) / (GAME_CONFIG.PADDLE_HEIGHT / 2)));
+    const hitPosition = Math.max(-1, Math.min(1, (c.crossY - paddleY) / (this.height(seat) / 2)));
     const isPerfectHit = Math.abs(hitPosition) <= 0.15; // centre 30%: double speed-up
     const isEdgeHit = Math.abs(hitPosition) >= 0.7; // outer 30%: sharp angle
     const dir = seat === 1 ? 1 : -1;
@@ -476,7 +487,7 @@ export class GameSession {
     // hit-stop: the ball sticks to the face for a beat (a late hit has
     // already been sitting there - it is never held longer for being late)
     c.hitAt = now;
-    c.releaseAt = Math.max(now, c.since + (isPerfectHit || isEdgeHit || power ? BIG_HITSTOP_MS : HITSTOP_MS));
+    c.releaseAt = Math.max(now, c.since + (isPerfectHit || power ? BIG_HITSTOP_MS : HITSTOP_MS));
     this.gameState.ballX = c.face;
     this.gameState.ballY = c.crossY;
   }
@@ -507,6 +518,9 @@ export class GameSession {
 
     this.player1UsedUltimates.clear();
     this.player2UsedUltimates.clear();
+    // THE SQUEEZE lasts one point: both paddles are whole again for the next
+    this.gameState.paddle1Height = GAME_CONFIG.PADDLE_HEIGHT;
+    this.gameState.paddle2Height = GAME_CONFIG.PADDLE_HEIGHT;
     this.sendToPlayer(this.player1.ws, { type: 'powerups_refreshed' });
     this.sendToPlayer(this.player2.ws, { type: 'powerups_refreshed' });
 
@@ -518,7 +532,7 @@ export class GameSession {
     this.startScoreCountdown();
   }
 
-  /** Increase ball speed up to max AND shrink paddles (cosmetic) progressively. */
+  /** Increase ball speed up to max AND squeeze both paddles (THE SQUEEZE: real hitboxes). */
   private speedUpBall() {
     const currentSpeed = Math.hypot(this.gameState.ballVelocityX, this.gameState.ballVelocityY);
     if (currentSpeed < GAME_CONFIG.MAX_BALL_SPEED) {
@@ -600,15 +614,17 @@ export class GameSession {
     this.sendToPlayer(this.player2.ws, message);
   }
 
-  private clampPaddle(y: number): number {
-    return Math.max(GAME_CONFIG.PADDLE_HEIGHT / 2, Math.min(GAME_CONFIG.CANVAS_HEIGHT - GAME_CONFIG.PADDLE_HEIGHT / 2, y));
+  /** A squeezed paddle can reach further into the corners: it is shorter. */
+  private clampPaddle(y: number, seat: Seat): number {
+    const half = this.height(seat) / 2;
+    return Math.max(half, Math.min(GAME_CONFIG.CANVAS_HEIGHT - half, y));
   }
 
   /** A paddle position arrived (y is the paddle's centre). */
   updatePaddlePosition(playerWs: WebSocket, y: number, timestamp?: number) {
     const seat = this.seatOf(playerWs);
     if (!seat || !Number.isFinite(y)) return;
-    const clampedY = this.clampPaddle(y);
+    const clampedY = this.clampPaddle(y, seat);
     if (seat === 1) this.gameState.paddle1Y = clampedY;
     else this.gameState.paddle2Y = clampedY;
 
@@ -623,6 +639,7 @@ export class GameSession {
   private broadcastGameState() {
     this.gameState.ballSpin = this.ballSpin;
     this.gameState.hold = !!this.contact;
+    this.gameState.squeeze = true;
     const message = { type: 'game_state' as const, state: this.gameState };
     this.sendToPlayer(this.player1.ws, message);
     this.sendToPlayer(this.player2.ws, message);

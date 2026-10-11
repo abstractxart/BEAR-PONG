@@ -173,5 +173,61 @@ test("abilities only work while the ball is in play", () => {
   assert.ok(a.sent.some((m) => m.type === "ultimate_activated"));
 });
 
+test("THE SQUEEZE: every return shrinks both REAL hitboxes, and a point makes them whole", () => {
+  const { s, a } = session();
+  for (let i = 0; i < 4; i++) s.speedUpBall();
+  assert.equal(s.gameState.paddle1Height, GAME_CONFIG.PADDLE_HEIGHT - 4 * GAME_CONFIG.PADDLE_SHRINK_PER_HIT);
+  // a ball that would have clipped a full 120px paddle now misses the squeezed one
+  const h = s.gameState.paddle1Height;
+  s.updatePaddlePosition(a, 360, clock);
+  aim(s, { x: LEFT_FACE + 10, y: 360 + h / 2 + R + 4, vx: -12 });
+  tick(s, 30);
+  assert.equal(hits(a).length, 0, "squeezed paddle misses");
+  s.cleanup();
+  // ...and the hit position is measured against the paddle you really have
+  const t = session();
+  for (let i = 0; i < 8; i++) t.s.speedUpBall();
+  const half = t.s.gameState.paddle1Height / 2;
+  t.s.updatePaddlePosition(t.a, 360, clock);
+  aim(t.s, { x: LEFT_FACE + 10, y: 360 + half * 0.8, vx: -12 });
+  tick(t.s);
+  assert.ok(Math.abs(hits(t.a)[0].hitPosition - 0.8) < 0.02, "an EDGE on the squeezed paddle");
+  for (let i = 0; i < 40; i++) t.s.speedUpBall();
+  assert.equal(t.s.gameState.paddle1Height, GAME_CONFIG.MIN_PADDLE_HEIGHT, "never below the floor");
+  t.s.scoreFor(2);
+  assert.equal(t.s.gameState.paddle1Height, GAME_CONFIG.PADDLE_HEIGHT);
+  assert.equal(t.s.gameState.paddle2Height, GAME_CONFIG.PADDLE_HEIGHT);
+  t.s.broadcastGameState();
+  assert.equal(t.a.sent.filter((m) => m.type === "game_state").at(-1).state.squeeze, true);
+  t.s.cleanup();
+});
+
+test("a squeezed paddle reaches further into the corners", () => {
+  const { s, a } = session();
+  for (let i = 0; i < 30; i++) s.speedUpBall();
+  s.updatePaddlePosition(a, 0, clock);
+  assert.equal(s.gameState.paddle1Y, GAME_CONFIG.MIN_PADDLE_HEIGHT / 2);
+  s.cleanup();
+});
+
+test("hit-stop: the long hold is for PERFECT and POWER, not EDGE", () => {
+  const { s, a } = session();
+  s.updatePaddlePosition(a, 360, clock);
+  aim(s, { x: LEFT_FACE + 10, y: 360 + 50, vx: -12 }); // an edge (|hit| ~ .83)
+  tick(s);
+  assert.ok(hits(a)[0].edge);
+  tick(s, 3); // 50ms: an edge is released after the base 34ms
+  assert.ok(s.gameState.ballX > LEFT_FACE, "edge released at the base hit-stop");
+  s.cleanup();
+  const p = session();
+  p.s.updatePaddlePosition(p.a, 360, clock);
+  aim(p.s, { x: LEFT_FACE + 10, y: 360, vx: -12 }); // PERFECT
+  tick(p.s);
+  assert.ok(hits(p.a)[0].perfect);
+  tick(p.s, 3);
+  assert.equal(p.s.gameState.ballX, LEFT_FACE, "a PERFECT still holds at 50ms");
+  p.s.cleanup();
+});
+
 Date.now = realNow;
 console.log(`\n${passed} passed`);
