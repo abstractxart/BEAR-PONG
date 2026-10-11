@@ -1,18 +1,93 @@
 /**
- * GameSession - Handles the physics and state for a single Pong match
+ * GameSession - the physics and state for a single Pong match.
+ *
+ * CONTACT (protocol 2). The old collision decided a hit as soon as the ball
+ * came within a speed-scaled padding of the paddle - up to ~200px early -
+ * against whatever paddle position had arrived by then, and teleported the
+ * ball onto the face. With network delay on top, what a player saw and what
+ * the server decided routinely disagreed.
+ *
+ * Now a hit happens where the ball ACTUALLY crosses the paddle face:
+ *
+ *   touch      the ball's path crosses the face plane this tick (swept, so
+ *              no speed can tunnel through). It stops on the face.
+ *   strike     the defender's paddle covers the crossing: a hit. The ball is
+ *              held on the face for a hit-stop (longer for PERFECT / EDGE /
+ *              POWER) and both screens see it stick to the paddle, then fly.
+ *   grace      the server's copy of the paddle is behind the player's own:
+ *              it left their machine one-way-latency ago, and they saw the
+ *              ball one-way-latency late. So if it is not there yet, wait one
+ *              of THEIR round trips (measured by ping) plus jitter for the
+ *              paddle the player actually had when they saw the ball arrive.
+ *              Any of their paddle samples arriving in that window that
+ *              covers the crossing is a hit. What you saw is what you get.
+ *   miss       no cover in time: the ball carries on through to the line. A
+ *              paddle far beyond reach skips the wait.
+ *
+ * BEAR CURVE: the defender's swing speed at contact (from their own paddle
+ * timestamps) puts spin on the ball - see curve.ts.
+ *
+ * Old clients (protocol 1) get the same exact contact, a fixed grace, and
+ * simply ignore the new fields and messages.
  */
-import { GAME_CONFIG, GameState, PlayerData, UltimateAbilityType } from './types.js';
+import { GAME_CONFIG, GameState, PlayerData, SERVER_PROTOCOL, UltimateAbilityType } from './types.js';
+import { applyCurve, RANKED_CURVE, spinFromSwing } from './curve.js';
 import type { WebSocket } from 'ws';
+
+type Seat = 1 | 2;
+
+/** A paddle position as it arrived: server time, the client's own clock, y. */
+interface PaddleSample {
+  at: number;
+  ct: number;
+  y: number;
+}
+
+/** The ball is on a paddle face: struck (hit-stop) or waiting on a late paddle. */
+interface Contact {
+  seat: Seat;
+  face: number;
+  crossY: number;
+  since: number;
+  deadline: number;
+  hitAt: number | null;
+  releaseAt: number;
+}
+
+const R = GAME_CONFIG.BALL_SIZE / 2;
+/** where the ball's CENTRE touches each face */
+const LEFT_FACE = 50 + GAME_CONFIG.PADDLE_WIDTH + R;
+const RIGHT_FACE = GAME_CONFIG.CANVAS_WIDTH - 50 - GAME_CONFIG.PADDLE_WIDTH - R;
+/** the paddle that collides is always the full 120 (the reported heights are cosmetic) */
+const REACH = GAME_CONFIG.PADDLE_HEIGHT / 2 + R;
+
+const HITSTOP_MS = 34;
+const BIG_HITSTOP_MS = 75;
+const GRACE = {
+  /** added to the defender's round trip: the paddle sample can arrive a little late */
+  jitter: 45,
+  min: 60,
+  max: 260,
+  /** for clients that never answer pings (protocol 1) */
+  fallback: 120,
+  /** a paddle further than this from the crossing cannot get there - do not wait */
+  reach: 280,
+};
+const SAMPLE_MEMORY_MS = 600;
 
 export class GameSession {
   private gameState: GameState;
   private player1: { ws: WebSocket; data: PlayerData };
   private player2: { ws: WebSocket; data: PlayerData };
   private gameLoop: NodeJS.Timeout | null = null;
+  private pingLoop: NodeJS.Timeout | null = null;
   private countdown: number = GAME_CONFIG.COUNTDOWN_DURATION;
   private countdownInterval: NodeJS.Timeout | null = null;
+  private started = false;
+  /** the match has finished (game over or a player gone) */
+  ended = false;
 
-  // 💰 BETTING: Track betting state
+  // 💰 BETTING (retired; kept so old clients and the READY handshake still work)
   private player1Bet: number = 0;
   private player2Bet: number = 0;
   private player1Ready: boolean = false;
@@ -20,11 +95,11 @@ export class GameSession {
   private bettingTimer: NodeJS.Timeout | null = null;
   private finalBetAmount: number = 0;
 
-  // Track previous ball position for continuous collision detection
+  // Track previous ball position for swept collision
   private prevBallX: number = 0;
   private prevBallY: number = 0;
 
-  // 🚀 ULTIMATE ABILITIES: Track active ultimates
+  // 🚀 ULTIMATE ABILITIES
   private timeFreezeActive: boolean = false;
   private timeFreezeEndTime: number = 0;
   private ballSpeedMultiplier: number = 1; // For TIME_FREEZE
@@ -32,10 +107,19 @@ export class GameSession {
   private player2UsedUltimates: Set<string> = new Set();
   private powerHitPlayer: number | null = null; // 1 or 2 if power hit is active
 
-  // 🎉 SCORE COUNTDOWN: Pause game and show flashy 3-2-1-GO! after each goal
+  // 🎉 SCORE COUNTDOWN
   private scoreCountdown: number = 3;
   private scoreCountdownInterval: NodeJS.Timeout | null = null;
   private isPaused: boolean = false;
+
+  // CONTACT + BEAR CURVE
+  private contact: Contact | null = null;
+  /** the ball already went past this seat's face (a miss): do not touch again */
+  private passed: Seat | null = null;
+  private samples: Record<Seat, PaddleSample[]> = { 1: [], 2: [] };
+  private rtt: Record<Seat, number | null> = { 1: null, 2: null };
+  private ballSpin = 0;
+  private ballAge = 0;
 
   constructor(
     player1: { ws: WebSocket; data: PlayerData },
@@ -44,1005 +128,539 @@ export class GameSession {
     this.player1 = player1;
     this.player2 = player2;
 
-    // Initialize game state
     this.gameState = {
       ballX: GAME_CONFIG.CANVAS_WIDTH / 2,
       ballY: GAME_CONFIG.CANVAS_HEIGHT / 2,
       ballVelocityX: GAME_CONFIG.INITIAL_BALL_SPEED * (Math.random() > 0.5 ? 1 : -1),
       ballVelocityY: GAME_CONFIG.INITIAL_BALL_SPEED * (Math.random() * 2 - 1),
-      paddle1Y: GAME_CONFIG.CANVAS_HEIGHT / 2, // Center Y (matches client Phaser Container positioning)
-      paddle2Y: GAME_CONFIG.CANVAS_HEIGHT / 2, // Center Y (matches client Phaser Container positioning)
-      paddle1Height: GAME_CONFIG.PADDLE_HEIGHT,  // 🔥 Initialize paddle heights
-      paddle2Height: GAME_CONFIG.PADDLE_HEIGHT,  // 🔥 Initialize paddle heights
+      paddle1Y: GAME_CONFIG.CANVAS_HEIGHT / 2,
+      paddle2Y: GAME_CONFIG.CANVAS_HEIGHT / 2,
+      paddle1Height: GAME_CONFIG.PADDLE_HEIGHT,
+      paddle2Height: GAME_CONFIG.PADDLE_HEIGHT,
       score1: 0,
       score2: 0,
       gameStarted: false,
       countdown: GAME_CONFIG.COUNTDOWN_DURATION,
+      ballSpin: 0,
+      hold: false,
     };
   }
 
+  /** Is this the session for a client that speaks protocol 2? */
+  private v2(seat: Seat): boolean {
+    return ((seat === 1 ? this.player1 : this.player2).data.protocol ?? 1) >= SERVER_PROTOCOL;
+  }
+
+  private seatOf(ws: WebSocket): Seat | null {
+    return ws === this.player1.ws ? 1 : ws === this.player2.ws ? 2 : null;
+  }
+
+  // ============================================================ READY lobby
   /**
-   * 💰 BETTING: Start the betting lobby timer (30 seconds)
+   * 💰 BETTING lobby, now just the READY handshake: the game starts when both
+   * players ready, or 30s in if one did. Never twice (see start()).
    */
   startBettingLobby() {
-    console.log('💰 Starting betting lobby (30 seconds)...');
+    console.log('💰 Starting ready lobby (30 seconds)...');
+    if (this.started || this.ended) return; // both readied before the lobby opened
 
     this.bettingTimer = setTimeout(() => {
-      console.log('⏰ Betting timer expired!');
-
-      // If neither player is ready, disconnect both and return to menu
+      this.bettingTimer = null;
+      if (this.started || this.ended) return;
       if (!this.player1Ready && !this.player2Ready) {
         console.log('❌ Neither player ready - sending timeout to both');
         this.sendToPlayer(this.player1.ws, { type: 'betting_timeout' });
         this.sendToPlayer(this.player2.ws, { type: 'betting_timeout' });
+        this.ended = true;
         this.cleanup();
         return;
       }
-
-      // If at least one player is ready, start game with their bet
-      if (this.player1Ready || this.player2Ready) {
-        console.log('✅ At least one player ready - starting game');
-
-        // RULE: If either player bets 0, final bet is 0 (no betting mode)
-        if (this.player1Bet === 0 || this.player2Bet === 0) {
-          console.log(`💰 [SERVER TIMEOUT] One player bet 0 (Player1: ${this.player1Bet}, Player2: ${this.player2Bet}) - Setting finalBetAmount to 0`);
-          this.finalBetAmount = 0;
-        } else {
-          this.finalBetAmount = Math.min(this.player1Bet, this.player2Bet);
-          console.log(`💰 [SERVER TIMEOUT] Both players bet (Player1: ${this.player1Bet}, Player2: ${this.player2Bet}) - Setting finalBetAmount to ${this.finalBetAmount}`);
-        }
-
-        this.sendToPlayer(this.player1.ws, { type: 'final_bet_amount', amount: this.finalBetAmount });
-        this.sendToPlayer(this.player2.ws, { type: 'final_bet_amount', amount: this.finalBetAmount });
-
-        // Start game countdown
-        this.start();
-      }
-    }, 30000); // 30 seconds
+      this.finalBetAmount = 0;
+      this.sendToPlayer(this.player1.ws, { type: 'final_bet_amount', amount: this.finalBetAmount });
+      this.sendToPlayer(this.player2.ws, { type: 'final_bet_amount', amount: this.finalBetAmount });
+      this.start();
+    }, 30000);
   }
 
-  /**
-   * 💰 BETTING: Handle player setting their bet
-   */
   handleSetBet(playerWs: WebSocket, amount: number) {
-    console.log(`💰 Player set bet: ${amount}`);
-
-    if (playerWs === this.player1.ws) {
-      this.player1Bet = amount;
-      this.sendToPlayer(this.player2.ws, { type: 'opponent_bet_set', amount });
-    } else if (playerWs === this.player2.ws) {
-      this.player2Bet = amount;
-      this.sendToPlayer(this.player1.ws, { type: 'opponent_bet_set', amount });
-    }
+    // Betting is retired; remembered only so an old client's flow still completes.
+    if (playerWs === this.player1.ws) this.player1Bet = amount;
+    else if (playerWs === this.player2.ws) this.player2Bet = amount;
   }
 
-  /**
-   * 💰 BETTING: Handle player clicking READY
-   */
   handleReadyToStart(playerWs: WebSocket) {
-    console.log('✅ Player is ready!');
+    if (playerWs === this.player1.ws) this.player1Ready = true;
+    else if (playerWs === this.player2.ws) this.player2Ready = true;
+    else return;
 
-    // Mark player as ready
-    if (playerWs === this.player1.ws) {
-      this.player1Ready = true;
-    } else if (playerWs === this.player2.ws) {
-      this.player2Ready = true;
-    }
-
-    // Notify opponent
     const opponent = playerWs === this.player1.ws ? this.player2 : this.player1;
     this.sendToPlayer(opponent.ws, { type: 'opponent_ready' });
 
-    // If both ready, determine final bet and start game
-    if (this.player1Ready && this.player2Ready) {
+    if (this.player1Ready && this.player2Ready && !this.started) {
       console.log('🎮 Both players ready - starting game!');
-
-      // RULE: If either player bets 0, final bet is 0 (no betting mode)
-      if (this.player1Bet === 0 || this.player2Bet === 0) {
-        console.log(`💰 [SERVER] One player bet 0 (Player1: ${this.player1Bet}, Player2: ${this.player2Bet}) - Setting finalBetAmount to 0`);
-        this.finalBetAmount = 0;
-      } else {
-        this.finalBetAmount = Math.min(this.player1Bet, this.player2Bet);
-        console.log(`💰 [SERVER] Both players bet (Player1: ${this.player1Bet}, Player2: ${this.player2Bet}) - Setting finalBetAmount to ${this.finalBetAmount}`);
-      }
-      console.log(`💰 Final bet amount: ${this.finalBetAmount}`);
-
-      // Send final bet to both players
+      this.finalBetAmount = 0;
       this.sendToPlayer(this.player1.ws, { type: 'final_bet_amount', amount: this.finalBetAmount });
       this.sendToPlayer(this.player2.ws, { type: 'final_bet_amount', amount: this.finalBetAmount });
-
-      // Cancel betting timer
       if (this.bettingTimer) {
         clearTimeout(this.bettingTimer);
         this.bettingTimer = null;
       }
-
-      // Start countdown/game
       this.start();
     }
   }
 
-  /**
-   * 🚀 ULTIMATE ABILITIES: Handle player using an ultimate ability
-   */
+  // ============================================================== abilities
   handleUseUltimate(playerWs: WebSocket, abilityType: UltimateAbilityType) {
-    console.log(`🚀 Player attempting to use ultimate: ${abilityType}`);
+    const seat = this.seatOf(playerWs);
+    if (!seat) return;
+    const usedSet = seat === 1 ? this.player1UsedUltimates : this.player2UsedUltimates;
+    const playerSide: 'left' | 'right' = seat === 1 ? 'left' : 'right';
 
-    // Determine which player and their used set
-    const isPlayer1 = playerWs === this.player1.ws;
-    const usedSet = isPlayer1 ? this.player1UsedUltimates : this.player2UsedUltimates;
-    const playerSide: 'left' | 'right' = isPlayer1 ? 'left' : 'right';
-
-    // Check if already used this ability
+    // Only while the ball is in play: in a countdown they were simply wasted
+    // (a freeze that expired in the pause, a dash to a parked ball).
+    if (!this.gameState.gameStarted || this.isPaused || this.ended) {
+      this.sendToPlayer(playerWs, { type: 'error', message: 'Abilities work once the ball is in play' });
+      return;
+    }
     if (usedSet.has(abilityType)) {
-      console.log(`❌ ${abilityType} already used by ${playerSide}`);
       this.sendToPlayer(playerWs, { type: 'error', message: 'Ultimate already used!' });
       return;
     }
-
-    // Mark as used
     usedSet.add(abilityType);
-    console.log(`✅ ${abilityType} activated by ${playerSide}`);
 
-    // Execute the ability
     switch (abilityType) {
       case 'time_freeze':
         this.activateTimeFreeze();
         break;
       case 'paddle_dash':
-        this.activatePaddleDash(isPlayer1);
+        this.activatePaddleDash(seat === 1);
         break;
       case 'power_hit':
-        this.activatePowerHit(isPlayer1);
+        this.activatePowerHit(seat === 1);
         break;
     }
 
-    // Broadcast to both players that ultimate was activated
-    const message = {
-      type: 'ultimate_activated' as const,
-      side: playerSide,
-      abilityType,
-    };
+    const message = { type: 'ultimate_activated' as const, side: playerSide, abilityType };
     this.sendToPlayer(this.player1.ws, message);
     this.sendToPlayer(this.player2.ws, message);
   }
 
-  /**
-   * 🚀 TIME FREEZE: Reduce ball speed to 10% for 1.3 seconds (ULTRA SLOW-MO!)
-   */
+  /** 🚀 TIME FREEZE: 3.33% ball speed for 1.3 seconds */
   private activateTimeFreeze() {
-    console.log('⏰ TIME FREEZE activated - ball speed reduced to 3.33% for 1.3 seconds');
     this.timeFreezeActive = true;
-    this.ballSpeedMultiplier = 0.0333; // ULTRA SLOW-MO (3.33% speed)
-    this.timeFreezeEndTime = Date.now() + 1300; // 1.3 seconds
+    this.ballSpeedMultiplier = 0.0333;
+    this.timeFreezeEndTime = Date.now() + 1300;
   }
 
-  /**
-   * 🚀 PADDLE DASH: Teleport paddle to ball's Y position
-   */
+  /** 🚀 PADDLE DASH: teleport the paddle to the ball's Y */
   private activatePaddleDash(isPlayer1: boolean) {
-    console.log(`⚡ PADDLE DASH activated - teleporting paddle to ball Y`);
-    if (isPlayer1) {
-      this.gameState.paddle1Y = this.gameState.ballY;
-    } else {
-      this.gameState.paddle2Y = this.gameState.ballY;
-    }
+    const y = this.clampPaddle(this.gameState.ballY);
+    if (isPlayer1) this.gameState.paddle1Y = y;
+    else this.gameState.paddle2Y = y;
+    this.samples[isPlayer1 ? 1 : 2].push({ at: Date.now(), ct: Date.now(), y });
   }
 
-  /**
-   * 🚀 POWER HIT: Next paddle hit increases ball speed significantly
-   */
+  /** 🚀 POWER HIT: the next paddle hit speeds the ball up three more times */
   private activatePowerHit(isPlayer1: boolean) {
-    console.log(`💥 POWER HIT activated for player ${isPlayer1 ? 1 : 2}`);
     this.powerHitPlayer = isPlayer1 ? 1 : 2;
   }
 
-  /**
-   * Start the countdown and then the game
-   */
+  // ================================================================ timing
+  /** Round trip, measured by ping (protocol 2). */
+  handlePong(playerWs: WebSocket, t: number) {
+    const seat = this.seatOf(playerWs);
+    if (!seat || !Number.isFinite(t)) return;
+    const sample = Date.now() - t;
+    if (sample < 0 || sample > 2000) return;
+    const prev = this.rtt[seat];
+    this.rtt[seat] = prev === null ? sample : prev * 0.7 + sample * 0.3;
+  }
+
+  /** How long to wait for a defender's paddle that is not there yet. */
+  private graceMs(seat: Seat): number {
+    const rtt = this.rtt[seat];
+    if (rtt === null) return GRACE.fallback;
+    return Math.max(GRACE.min, Math.min(GRACE.max, rtt + GRACE.jitter));
+  }
+
+  // ================================================================= start
+  /** Start the countdown and then the game. Idempotent: never two loops. */
   start() {
+    if (this.started || this.ended) return;
+    this.started = true;
     console.log('🎮 Starting countdown for match');
 
     this.countdownInterval = setInterval(() => {
       this.countdown--;
       this.gameState.countdown = this.countdown;
-
-      // Send countdown to both players
-      this.sendToPlayer(this.player1.ws, {
-        type: 'countdown',
-        count: this.countdown,
-      });
-      this.sendToPlayer(this.player2.ws, {
-        type: 'countdown',
-        count: this.countdown,
-      });
-
-      if (this.countdown <= 0) {
-        this.startGame();
-      }
+      this.sendToPlayer(this.player1.ws, { type: 'countdown', count: this.countdown });
+      this.sendToPlayer(this.player2.ws, { type: 'countdown', count: this.countdown });
+      if (this.countdown <= 0) this.startGame();
     }, 1000);
   }
 
-  /**
-   * Start the actual game loop
-   */
   private startGame() {
     if (this.countdownInterval) {
       clearInterval(this.countdownInterval);
       this.countdownInterval = null;
     }
+    if (this.gameLoop || this.ended) return;
 
     this.gameState.gameStarted = true;
     this.gameState.countdown = undefined;
-
     console.log('🎮 Game started!');
 
-    // Start game loop at 60 FPS
     this.gameLoop = setInterval(() => {
       this.updatePhysics();
       this.broadcastGameState();
     }, 1000 / GAME_CONFIG.TICK_RATE);
+
+    // round trips, for the grace window
+    const ping = () => {
+      const t = Date.now();
+      if (this.v2(1)) this.sendToPlayer(this.player1.ws, { type: 'ping', t });
+      if (this.v2(2)) this.sendToPlayer(this.player2.ws, { type: 'ping', t });
+    };
+    ping();
+    this.pingLoop = setInterval(ping, 1000);
   }
 
-  /**
-   * Update game physics (ball movement, collision detection)
-   * GODMODE: Zero-tunneling collision with swept detection + safety nets
-   */
+  // =============================================================== physics
   private updatePhysics() {
-    if (!this.gameState.gameStarted) return;
-    if (this.isPaused) return; // 🎉 Pause during score countdown
+    if (!this.gameState.gameStarted || this.isPaused || this.ended) return;
+    const now = Date.now();
 
-
-    // 🚀 ULTIMATE ABILITIES: Check for TIME_FREEZE expiration
-    if (this.timeFreezeActive && Date.now() >= this.timeFreezeEndTime) {
-      console.log('⏰ TIME FREEZE expired - restoring normal ball speed');
+    if (this.timeFreezeActive && now >= this.timeFreezeEndTime) {
       this.timeFreezeActive = false;
       this.ballSpeedMultiplier = 1;
     }
 
-    // 🚀🔥 BROKEN SPEED MODE: Velocity clamping REMOVED!
-    // Ball can now reach MAX_BALL_SPEED (35) - BG123 BROKEN MODE!
+    // the ball is on a paddle face: struck, or waiting on a late paddle
+    if (this.contact && this.tickContact(now)) return;
 
+    const scale = this.ballSpeedMultiplier;
+    // BEAR CURVE
+    if (this.ballSpin) {
+      const v = { vx: this.gameState.ballVelocityX, vy: this.gameState.ballVelocityY };
+      this.ballSpin = applyCurve(v, this.ballSpin, RANKED_CURVE, scale, this.ballAge);
+      this.gameState.ballVelocityX = v.vx;
+      this.gameState.ballVelocityY = v.vy;
+    }
+    this.ballAge += scale;
 
-    // Store previous position for swept collision
     this.prevBallX = this.gameState.ballX;
     this.prevBallY = this.gameState.ballY;
+    this.gameState.ballX += this.gameState.ballVelocityX * scale;
+    this.gameState.ballY += this.gameState.ballVelocityY * scale;
 
-    // Move ball (apply TIME_FREEZE multiplier if active)
-    this.gameState.ballX += this.gameState.ballVelocityX * this.ballSpeedMultiplier;
-    this.gameState.ballY += this.gameState.ballVelocityY * this.ballSpeedMultiplier;
-
-    // Ball collision with top/bottom walls (bounce off)
-    if (
-      this.gameState.ballY <= GAME_CONFIG.BALL_SIZE / 2 ||
-      this.gameState.ballY >= GAME_CONFIG.CANVAS_HEIGHT - GAME_CONFIG.BALL_SIZE / 2
-    ) {
+    // top/bottom walls
+    if (this.gameState.ballY <= R || this.gameState.ballY >= GAME_CONFIG.CANVAS_HEIGHT - R) {
       this.gameState.ballVelocityY *= -1;
-      this.gameState.ballY = Math.max(
-        GAME_CONFIG.BALL_SIZE / 2,
-        Math.min(GAME_CONFIG.CANVAS_HEIGHT - GAME_CONFIG.BALL_SIZE / 2, this.gameState.ballY)
-      );
+      this.gameState.ballY = Math.max(R, Math.min(GAME_CONFIG.CANVAS_HEIGHT - R, this.gameState.ballY));
+      this.ballSpin *= RANKED_CURVE.wallKeep;
     }
 
-    // ULTRA GODMODE: Calculate current ball speed for dynamic collision padding
-    const currentSpeed = Math.sqrt(
-      this.gameState.ballVelocityX * this.gameState.ballVelocityX +
-      this.gameState.ballVelocityY * this.gameState.ballVelocityY
-    );
-
-    // ULTRA GODMODE: Dynamic collision padding that INCREASES with ball speed
-    // Base: 50px + (speed - 6) * 8px scaling
-    // At speed 6 (min): 50px padding
-    // At speed 10 (gold): 50 + (4 * 8) = 82px padding
-    // At speed 13 (red): 50 + (7 * 8) = 106px padding
-    // At speed 15 (max): 50 + (9 * 8) = 122px padding
-    const BASE_PADDING = 50;
-    const SPEED_SCALING = 8; // Extra padding per speed unit
-    const COLLISION_PADDING = BASE_PADDING + Math.max(0, (currentSpeed - GAME_CONFIG.INITIAL_BALL_SPEED) * SPEED_SCALING);
-
-    console.log(`[ULTRA GODMODE] Speed: ${currentSpeed.toFixed(1)}, Padding: ${COLLISION_PADDING.toFixed(0)}px`);
-
-    // Left paddle (player 1) - positioned at left edge
-    const paddle1Left = 50;
-    const paddle1Right = paddle1Left + GAME_CONFIG.PADDLE_WIDTH;
-    // paddle1Y is the CENTER of the paddle (matches client-side Phaser Container positioning)
-    const paddle1Top = this.gameState.paddle1Y - GAME_CONFIG.PADDLE_HEIGHT / 2;
-    const paddle1Bottom = this.gameState.paddle1Y + GAME_CONFIG.PADDLE_HEIGHT / 2;
-
-    // TIER 1: Check if ball crossed the paddle's X boundary (SWEPT DETECTION)
-    // 🛡️ ANTI-TUNNEL FIX: Removed the check that ball must start outside paddle
-    // Now catches balls moving at ANY speed, even if they jump entire paddle width
-    let leftPaddleHit = false;
-    if (
-      this.gameState.ballVelocityX < 0 && // Moving left
-      this.gameState.ballX - GAME_CONFIG.BALL_SIZE / 2 <= paddle1Right + COLLISION_PADDING // Now at or past paddle (with padding)
-    ) {
-      // Calculate Y position when ball crosses paddle's X plane
-      // Use absolute distance traveled to ensure positive t value
-      const ballLeftEdge = this.gameState.ballX - GAME_CONFIG.BALL_SIZE / 2;
-      const prevBallLeftEdge = this.prevBallX - GAME_CONFIG.BALL_SIZE / 2;
-
-      // Calculate interpolation factor (0 to 1) for when ball crosses paddle face
-      const distanceTraveled = prevBallLeftEdge - ballLeftEdge; // Always positive when moving left
-      const distanceToPaddle = prevBallLeftEdge - paddle1Right;
-      const t = Math.max(0, Math.min(1, distanceToPaddle / distanceTraveled));
-
-      const crossY = this.prevBallY + (this.gameState.ballVelocityY * t);
-
-      // Check if Y position is within paddle bounds (EXACT - no padding on Y axis!)
-      const minY = paddle1Top - GAME_CONFIG.BALL_SIZE / 2;
-      const maxY = paddle1Bottom + GAME_CONFIG.BALL_SIZE / 2;
-
-      if (crossY >= minY && crossY <= maxY) {
-        // HIT! TIER 7: Guaranteed bounce response
-        console.log(`[COLLISION] Left paddle HIT! crossY=${crossY.toFixed(1)}, paddleY=${this.gameState.paddle1Y.toFixed(1)}, range=${minY.toFixed(1)}-${maxY.toFixed(1)}`);
-        this.gameState.ballVelocityX = Math.abs(this.gameState.ballVelocityX);
-
-        // TIER 7: Force ball OUTSIDE paddle bounds (safety margin)
-        this.gameState.ballX = paddle1Right + GAME_CONFIG.BALL_SIZE / 2 + 2;
-
-        // GODMODE FUN: Add spin based on where ball hit paddle (CLAMPED for fun)
-        const paddleCenter = (paddle1Top + paddle1Bottom) / 2;
-        const hitPosition = (crossY - paddleCenter) / (GAME_CONFIG.PADDLE_HEIGHT / 2);
-
-        // 🔥 JUICE: PERFECT HIT ZONE (center 30% of paddle)
-        const isPerfectHit = Math.abs(hitPosition) <= 0.15;
-        // 🎯 EDGE HIT ZONE (outer 30% of paddle for max angle control)
-        const isEdgeHit = Math.abs(hitPosition) >= 0.7;
-
-        if (isPerfectHit) {
-          console.log(`[PERFECT HIT!] Left paddle - Center shot! hitPosition=${hitPosition.toFixed(2)}`);
-        } else if (isEdgeHit) {
-          console.log(`[EDGE HIT!] Left paddle - Sharp angle! hitPosition=${hitPosition.toFixed(2)}`);
-        }
-
-        // 🎯 Enhanced spin for edge hits - reward skilled positioning
-        let spinStrength = currentSpeed >= 10 ? 1.05 : 1.575; // Base spin strength (reduced to 30% of original)
-        if (isEdgeHit) {
-          spinStrength *= 1.8; // 80% more spin on edge hits for skill expression
-          console.log(`[EDGE BOOST] Spin strength boosted to ${spinStrength.toFixed(1)}`);
-
-          // 🎯 Broadcast edge hit to clients for visual effects
-          this.sendToPlayer(this.player1.ws, { type: 'edge_hit', side: 'left', hitPosition });
-          this.sendToPlayer(this.player2.ws, { type: 'edge_hit', side: 'left', hitPosition });
-        }
-
-        this.gameState.ballVelocityY += hitPosition * spinStrength;
-
-        // 🎯 Higher Y velocity cap to allow sharper angles from edge hits
-        const MAX_Y_VELOCITY = currentSpeed >= 10 ? 8 : 10; // Increased from 4/6 to allow sharper angles
-        this.gameState.ballVelocityY = Math.max(-MAX_Y_VELOCITY, Math.min(MAX_Y_VELOCITY, this.gameState.ballVelocityY));
-
-        // GODMODE FUN: Ensure minimum horizontal velocity (ball never slows down on hit)
-        const MIN_X_VELOCITY = currentSpeed; // Ball maintains at least current speed
-        if (Math.abs(this.gameState.ballVelocityX) < MIN_X_VELOCITY) {
-          this.gameState.ballVelocityX = Math.sign(this.gameState.ballVelocityX) * MIN_X_VELOCITY;
-        }
-
-        // Increase ball speed slightly
-        this.speedUpBall();
-
-        // 🔥 JUICE: PERFECT HIT = DOUBLE SPEED BONUS!
-        if (isPerfectHit) {
-          this.speedUpBall(); // BONUS speed increase!
-        }
-
-        // 🚀 ULTIMATE: POWER HIT - Apply massive speed boost if active
-        if (this.powerHitPlayer === 1) {
-          console.log('💥 POWER HIT triggered on left paddle - SPEED BOOST!');
-          this.speedUpBall();
-          this.speedUpBall();
-          this.speedUpBall(); // 3x speed boost!
-          this.powerHitPlayer = null; // Clear after use
-        }
-
-        leftPaddleHit = true;
-      } else {
-        // MISS! Log why
-        console.log(`[COLLISION] Left paddle MISS! crossY=${crossY.toFixed(1)}, paddleY=${this.gameState.paddle1Y.toFixed(1)}, range=${minY.toFixed(1)}-${maxY.toFixed(1)}, diff=${crossY < minY ? (crossY - minY).toFixed(1) : (crossY - maxY).toFixed(1)}`);
-      }
+    // the paddle faces (swept: any speed)
+    const vx = this.gameState.ballVelocityX;
+    if (vx < 0 && this.passed !== 1 && this.prevBallX > LEFT_FACE && this.gameState.ballX <= LEFT_FACE) {
+      this.touch(1, LEFT_FACE, now);
+      return;
+    }
+    if (vx > 0 && this.passed !== 2 && this.prevBallX < RIGHT_FACE && this.gameState.ballX >= RIGHT_FACE) {
+      this.touch(2, RIGHT_FACE, now);
+      return;
     }
 
-    // ULTRA GODMODE FAILSAFE: Emergency collision check for left paddle
-    // If ball is ALREADY INSIDE/PAST paddle zone but within Y bounds, force bounce
-    if (
-      !leftPaddleHit && // Haven't already registered a hit
-      this.gameState.ballVelocityX < 0 && // Moving left
-      this.gameState.ballX - GAME_CONFIG.BALL_SIZE / 2 <= paddle1Right && // Past paddle X
-      this.gameState.ballX + GAME_CONFIG.BALL_SIZE / 2 >= paddle1Left && // But not completely past
-      this.gameState.ballY >= paddle1Top - GAME_CONFIG.BALL_SIZE / 2 && // Within paddle Y (EXACT - no extra padding!)
-      this.gameState.ballY <= paddle1Bottom + GAME_CONFIG.BALL_SIZE / 2
-    ) {
-      console.log(`[EMERGENCY] Left paddle FAILSAFE TRIGGERED! ballX=${this.gameState.ballX.toFixed(1)}, ballY=${this.gameState.ballY.toFixed(1)}`);
-      this.gameState.ballVelocityX = Math.abs(this.gameState.ballVelocityX);
-      this.gameState.ballX = paddle1Right + GAME_CONFIG.BALL_SIZE / 2 + 2;
+    // scoring
+    if (this.gameState.ballX <= 0) this.scoreFor(2);
+    else if (this.gameState.ballX >= GAME_CONFIG.CANVAS_WIDTH) this.scoreFor(1);
+  }
 
-      // GODMODE FUN: Add spin (emergency bounce)
-      const paddleCenter = (paddle1Top + paddle1Bottom) / 2;
-      const hitPosition = (this.gameState.ballY - paddleCenter) / (GAME_CONFIG.PADDLE_HEIGHT / 2);
+  /** The ball reaches a face: stop it there and decide - now, or after grace. */
+  private touch(seat: Seat, face: number, now: number) {
+    const dx = this.prevBallX - this.gameState.ballX;
+    const t = dx !== 0 ? Math.max(0, Math.min(1, (this.prevBallX - face) / dx)) : 1;
+    const crossY = Math.max(R, Math.min(GAME_CONFIG.CANVAS_HEIGHT - R, this.prevBallY + (this.gameState.ballY - this.prevBallY) * t));
+    this.gameState.ballX = face;
+    this.gameState.ballY = crossY;
 
-      // 🔥 JUICE: PERFECT HIT ZONE (center 30% of paddle)
-      const isPerfectHit = Math.abs(hitPosition) <= 0.15;
-      // 🎯 EDGE HIT ZONE (outer 30% of paddle for max angle control)
-      const isEdgeHit = Math.abs(hitPosition) >= 0.7;
+    const paddleY = seat === 1 ? this.gameState.paddle1Y : this.gameState.paddle2Y;
+    // a paddle that cannot possibly get there in time: no wait, straight through
+    const far = Math.abs(crossY - paddleY) - REACH > GRACE.reach;
+    this.contact = { seat, face, crossY, since: now, deadline: now + (far ? 0 : this.graceMs(seat)), hitAt: null, releaseAt: 0 };
 
-      if (isPerfectHit) {
-        console.log(`[PERFECT HIT!] Left paddle FAILSAFE - Center shot! hitPosition=${hitPosition.toFixed(2)}`);
-      } else if (isEdgeHit) {
-        console.log(`[EDGE HIT!] Left paddle FAILSAFE - Sharp angle! hitPosition=${hitPosition.toFixed(2)}`);
-      }
+    if (Math.abs(crossY - paddleY) <= REACH) this.strike(seat, paddleY, now);
+    else if (far) this.letThrough(seat);
+  }
 
-      // 🎯 Enhanced spin for edge hits
-      let spinStrength = currentSpeed >= 10 ? 1.05 : 1.575; // Base spin strength (reduced to 30% of original)
-      if (isEdgeHit) {
-        spinStrength *= 1.8; // 80% more spin on edge hits
+  /** Returns true while the ball is still held on the face this tick. */
+  private tickContact(now: number): boolean {
+    const c = this.contact!;
+    if (c.hitAt !== null) {
+      if (now < c.releaseAt) return true;
+      this.contact = null; // hit-stop over: away it goes, this very tick
+      return false;
+    }
+    // Late paddle: anything the defender sent in the window that covers it.
+    // (A sample that left them as they SAW the ball arrive lands one round
+    // trip after the touch - inside the window.)
+    const s = this.samples[c.seat].find((p) => p.at >= c.since - 20 && Math.abs(c.crossY - p.y) <= REACH);
+    if (s) {
+      this.strike(c.seat, s.y, now);
+      return true;
+    }
+    if (now < c.deadline) return true;
+    this.letThrough(c.seat); // no save: on through the line, this very tick
+    return false;
+  }
 
-        // 🎯 Broadcast edge hit to clients for visual effects
-        this.sendToPlayer(this.player1.ws, { type: 'edge_hit', side: 'left', hitPosition });
-        this.sendToPlayer(this.player2.ws, { type: 'edge_hit', side: 'left', hitPosition });
-      }
+  /** No paddle: the ball carries on through the face to the goal line. */
+  private letThrough(seat: Seat) {
+    this.contact = null;
+    this.passed = seat;
+  }
 
-      this.gameState.ballVelocityY += hitPosition * spinStrength;
+  /** A hit. The angle, speed and spin rules are the original ones. */
+  private strike(seat: Seat, paddleY: number, now: number) {
+    const c = this.contact!;
+    const speed = Math.hypot(this.gameState.ballVelocityX, this.gameState.ballVelocityY);
+    const hitPosition = Math.max(-1, Math.min(1, (c.crossY - paddleY) / (GAME_CONFIG.PADDLE_HEIGHT / 2)));
+    const isPerfectHit = Math.abs(hitPosition) <= 0.15; // centre 30%: double speed-up
+    const isEdgeHit = Math.abs(hitPosition) >= 0.7; // outer 30%: sharp angle
+    const dir = seat === 1 ? 1 : -1;
+    const side: 'left' | 'right' = seat === 1 ? 'left' : 'right';
 
-      // 🎯 Higher Y velocity cap for sharper angles
-      const MAX_Y_VELOCITY = currentSpeed >= 10 ? 8 : 10;
-      this.gameState.ballVelocityY = Math.max(-MAX_Y_VELOCITY, Math.min(MAX_Y_VELOCITY, this.gameState.ballVelocityY));
+    this.gameState.ballVelocityX = dir * Math.abs(this.gameState.ballVelocityX);
+    let spinStrength = speed >= 10 ? 1.05 : 1.575;
+    if (isEdgeHit) spinStrength *= 1.8;
+    this.gameState.ballVelocityY += hitPosition * spinStrength;
+    const MAX_Y_VELOCITY = speed >= 10 ? 8 : 10;
+    this.gameState.ballVelocityY = Math.max(-MAX_Y_VELOCITY, Math.min(MAX_Y_VELOCITY, this.gameState.ballVelocityY));
+    if (Math.abs(this.gameState.ballVelocityX) < speed) this.gameState.ballVelocityX = dir * speed;
 
-      const MIN_X_VELOCITY = currentSpeed; // Ball maintains at least current speed
-      if (Math.abs(this.gameState.ballVelocityX) < MIN_X_VELOCITY) {
-        this.gameState.ballVelocityX = Math.sign(this.gameState.ballVelocityX) * MIN_X_VELOCITY;
-      }
-
+    this.speedUpBall();
+    if (isPerfectHit) this.speedUpBall();
+    const power = this.powerHitPlayer === seat;
+    if (power) {
       this.speedUpBall();
-
-      // 🔥 JUICE: PERFECT HIT = DOUBLE SPEED BONUS!
-      if (isPerfectHit) {
-        this.speedUpBall(); // BONUS speed increase!
-      }
-
-      // 🚀 ULTIMATE: POWER HIT - Apply massive speed boost if active
-      if (this.powerHitPlayer === 1) {
-        console.log('💥 POWER HIT triggered on left paddle FAILSAFE - SPEED BOOST!');
-        this.speedUpBall();
-        this.speedUpBall();
-        this.speedUpBall(); // 3x speed boost!
-        this.powerHitPlayer = null; // Clear after use
-      }
-    }
-
-    // 🛡️ SUPER-FAILSAFE: Catch balls that have COMPLETELY PASSED THROUGH left paddle
-    // This handles extreme cases where ball jumps so far it skips ALL detection zones
-    if (
-      !leftPaddleHit && // Haven't registered a hit yet
-      this.gameState.ballVelocityX < 0 && // Moving left
-      this.gameState.ballX < paddle1Right && // Ball is now PAST the paddle (to the left)
-      this.prevBallX >= paddle1Left // Ball WAS in front of or intersecting paddle last frame
-    ) {
-      // Check if ball's path intersected paddle's Y range at ANY point
-      const ballTopNow = this.gameState.ballY - GAME_CONFIG.BALL_SIZE / 2;
-      const ballBottomNow = this.gameState.ballY + GAME_CONFIG.BALL_SIZE / 2;
-      const ballTopPrev = this.prevBallY - GAME_CONFIG.BALL_SIZE / 2;
-      const ballBottomPrev = this.prevBallY + GAME_CONFIG.BALL_SIZE / 2;
-
-      // Check if ball's Y range (current or previous) overlaps paddle's Y range
-      const currentOverlap = ballBottomNow >= paddle1Top && ballTopNow <= paddle1Bottom;
-      const prevOverlap = ballBottomPrev >= paddle1Top && ballTopPrev <= paddle1Bottom;
-
-      if (currentOverlap || prevOverlap) {
-        console.log(`[SUPER-FAILSAFE] Left paddle - Ball tunneled through! Forcing bounce. ballX=${this.gameState.ballX.toFixed(1)}, prevBallX=${this.prevBallX.toFixed(1)}`);
-
-        // FORCE BOUNCE - Ball hit the paddle but tunneled through
-        this.gameState.ballVelocityX = Math.abs(this.gameState.ballVelocityX);
-        this.gameState.ballX = paddle1Right + GAME_CONFIG.BALL_SIZE / 2 + 2;
-
-        // Add spin based on current Y position
-        const paddleCenter = (paddle1Top + paddle1Bottom) / 2;
-        const hitPosition = (this.gameState.ballY - paddleCenter) / (GAME_CONFIG.PADDLE_HEIGHT / 2);
-        let spinStrength = currentSpeed >= 10 ? 1.05 : 1.575;
-        this.gameState.ballVelocityY += hitPosition * spinStrength;
-
-        const MAX_Y_VELOCITY = currentSpeed >= 10 ? 8 : 10;
-        this.gameState.ballVelocityY = Math.max(-MAX_Y_VELOCITY, Math.min(MAX_Y_VELOCITY, this.gameState.ballVelocityY));
-
-        const MIN_X_VELOCITY = currentSpeed;
-        if (Math.abs(this.gameState.ballVelocityX) < MIN_X_VELOCITY) {
-          this.gameState.ballVelocityX = Math.sign(this.gameState.ballVelocityX) * MIN_X_VELOCITY;
-        }
-
-        this.speedUpBall();
-
-        if (this.powerHitPlayer === 1) {
-          console.log('💥 POWER HIT triggered on left paddle SUPER-FAILSAFE - SPEED BOOST!');
-          this.speedUpBall();
-          this.speedUpBall();
-          this.speedUpBall(); // 3x speed boost!
-          this.powerHitPlayer = null;
-        }
-      }
-    }
-
-    // Right paddle (player 2) - positioned at right edge
-    const paddle2Left = GAME_CONFIG.CANVAS_WIDTH - 50 - GAME_CONFIG.PADDLE_WIDTH;
-    const paddle2Right = paddle2Left + GAME_CONFIG.PADDLE_WIDTH;
-    // paddle2Y is the CENTER of the paddle (matches client-side Phaser Container positioning)
-    const paddle2Top = this.gameState.paddle2Y - GAME_CONFIG.PADDLE_HEIGHT / 2;
-    const paddle2Bottom = this.gameState.paddle2Y + GAME_CONFIG.PADDLE_HEIGHT / 2;
-
-    // TIER 1: Check if ball crossed the paddle's X boundary (SWEPT DETECTION)
-    // 🛡️ ANTI-TUNNEL FIX: Removed the check that ball must start outside paddle
-    // Now catches balls moving at ANY speed, even if they jump entire paddle width
-    let rightPaddleHit = false;
-    if (
-      this.gameState.ballVelocityX > 0 && // Moving right
-      this.gameState.ballX + GAME_CONFIG.BALL_SIZE / 2 >= paddle2Left - COLLISION_PADDING // Now at or past paddle (with padding)
-    ) {
-      // Calculate Y position when ball crosses paddle's X plane
-      // Use absolute distance traveled to ensure positive t value
-      const ballRightEdge = this.gameState.ballX + GAME_CONFIG.BALL_SIZE / 2;
-      const prevBallRightEdge = this.prevBallX + GAME_CONFIG.BALL_SIZE / 2;
-
-      // Calculate interpolation factor (0 to 1) for when ball crosses paddle face
-      const distanceTraveled = ballRightEdge - prevBallRightEdge; // Always positive when moving right
-      const distanceToPaddle = paddle2Left - prevBallRightEdge;
-      const t = Math.max(0, Math.min(1, distanceToPaddle / distanceTraveled));
-
-      const crossY = this.prevBallY + (this.gameState.ballVelocityY * t);
-
-      // Check if Y position is within paddle bounds (EXACT - no padding on Y axis!)
-      const minY = paddle2Top - GAME_CONFIG.BALL_SIZE / 2;
-      const maxY = paddle2Bottom + GAME_CONFIG.BALL_SIZE / 2;
-
-      if (crossY >= minY && crossY <= maxY) {
-        // HIT! TIER 7: Guaranteed bounce response
-        console.log(`[COLLISION] Right paddle HIT! crossY=${crossY.toFixed(1)}, paddleY=${this.gameState.paddle2Y.toFixed(1)}, range=${minY.toFixed(1)}-${maxY.toFixed(1)}`);
-        this.gameState.ballVelocityX = -Math.abs(this.gameState.ballVelocityX);
-
-        // TIER 7: Force ball OUTSIDE paddle bounds (safety margin)
-        this.gameState.ballX = paddle2Left - GAME_CONFIG.BALL_SIZE / 2 - 2;
-
-        // GODMODE FUN: Add spin based on where ball hit paddle (CLAMPED for fun)
-        const paddleCenter = (paddle2Top + paddle2Bottom) / 2;
-        const hitPosition = (crossY - paddleCenter) / (GAME_CONFIG.PADDLE_HEIGHT / 2);
-
-        // 🔥 JUICE: PERFECT HIT ZONE (center 30% of paddle)
-        const isPerfectHit = Math.abs(hitPosition) <= 0.15;
-        // 🎯 EDGE HIT ZONE (outer 30% of paddle for max angle control)
-        const isEdgeHit = Math.abs(hitPosition) >= 0.7;
-
-        if (isPerfectHit) {
-          console.log(`[PERFECT HIT!] Right paddle - Center shot! hitPosition=${hitPosition.toFixed(2)}`);
-        } else if (isEdgeHit) {
-          console.log(`[EDGE HIT!] Right paddle - Sharp angle! hitPosition=${hitPosition.toFixed(2)}`);
-        }
-
-        // 🎯 Enhanced spin for edge hits - reward skilled positioning
-        let spinStrength = currentSpeed >= 10 ? 1.05 : 1.575; // Base spin strength (reduced to 30% of original)
-        if (isEdgeHit) {
-          spinStrength *= 1.8; // 80% more spin on edge hits for skill expression
-          console.log(`[EDGE BOOST] Spin strength boosted to ${spinStrength.toFixed(1)}`);
-
-          // 🎯 Broadcast edge hit to clients for visual effects
-          this.sendToPlayer(this.player1.ws, { type: 'edge_hit', side: 'right', hitPosition });
-          this.sendToPlayer(this.player2.ws, { type: 'edge_hit', side: 'right', hitPosition });
-        }
-
-        this.gameState.ballVelocityY += hitPosition * spinStrength;
-
-        // 🎯 Higher Y velocity cap to allow sharper angles from edge hits
-        const MAX_Y_VELOCITY = currentSpeed >= 10 ? 8 : 10; // Increased from 4/6 to allow sharper angles
-        this.gameState.ballVelocityY = Math.max(-MAX_Y_VELOCITY, Math.min(MAX_Y_VELOCITY, this.gameState.ballVelocityY));
-
-        // GODMODE FUN: Ensure minimum horizontal velocity (ball never slows down on hit)
-        const MIN_X_VELOCITY = currentSpeed; // Ball maintains at least current speed
-        if (Math.abs(this.gameState.ballVelocityX) < MIN_X_VELOCITY) {
-          this.gameState.ballVelocityX = Math.sign(this.gameState.ballVelocityX) * MIN_X_VELOCITY;
-        }
-
-        // Increase ball speed slightly
-        this.speedUpBall();
-
-        // 🔥 JUICE: PERFECT HIT = DOUBLE SPEED BONUS!
-        if (isPerfectHit) {
-          this.speedUpBall(); // BONUS speed increase!
-        }
-
-        // 🚀 ULTIMATE: POWER HIT - Apply massive speed boost if active
-        if (this.powerHitPlayer === 2) {
-          console.log('💥 POWER HIT triggered on right paddle - SPEED BOOST!');
-          this.speedUpBall();
-          this.speedUpBall();
-          this.speedUpBall(); // 3x speed boost!
-          this.powerHitPlayer = null; // Clear after use
-        }
-
-        rightPaddleHit = true;
-      } else {
-        // MISS! Log why
-        console.log(`[COLLISION] Right paddle MISS! crossY=${crossY.toFixed(1)}, paddleY=${this.gameState.paddle2Y.toFixed(1)}, range=${minY.toFixed(1)}-${maxY.toFixed(1)}, diff=${crossY < minY ? (crossY - minY).toFixed(1) : (crossY - maxY).toFixed(1)}`);
-      }
-    }
-
-    // ULTRA GODMODE FAILSAFE: Emergency collision check for right paddle
-    // If ball is ALREADY INSIDE/PAST paddle zone but within Y bounds, force bounce
-    if (
-      !rightPaddleHit && // Haven't already registered a hit
-      this.gameState.ballVelocityX > 0 && // Moving right
-      this.gameState.ballX + GAME_CONFIG.BALL_SIZE / 2 >= paddle2Left && // Past paddle X
-      this.gameState.ballX - GAME_CONFIG.BALL_SIZE / 2 <= paddle2Right && // But not completely past
-      this.gameState.ballY >= paddle2Top - GAME_CONFIG.BALL_SIZE / 2 && // Within paddle Y (EXACT - no extra padding!)
-      this.gameState.ballY <= paddle2Bottom + GAME_CONFIG.BALL_SIZE / 2
-    ) {
-      console.log(`[EMERGENCY] Right paddle FAILSAFE TRIGGERED! ballX=${this.gameState.ballX.toFixed(1)}, ballY=${this.gameState.ballY.toFixed(1)}`);
-      this.gameState.ballVelocityX = -Math.abs(this.gameState.ballVelocityX);
-      this.gameState.ballX = paddle2Left - GAME_CONFIG.BALL_SIZE / 2 - 2;
-
-      // GODMODE FUN: Add spin (emergency bounce)
-      const paddleCenter = (paddle2Top + paddle2Bottom) / 2;
-      const hitPosition = (this.gameState.ballY - paddleCenter) / (GAME_CONFIG.PADDLE_HEIGHT / 2);
-
-      // 🔥 JUICE: PERFECT HIT ZONE (center 30% of paddle)
-      const isPerfectHit = Math.abs(hitPosition) <= 0.15;
-      // 🎯 EDGE HIT ZONE (outer 30% of paddle for max angle control)
-      const isEdgeHit = Math.abs(hitPosition) >= 0.7;
-
-      if (isPerfectHit) {
-        console.log(`[PERFECT HIT!] Right paddle FAILSAFE - Center shot! hitPosition=${hitPosition.toFixed(2)}`);
-      } else if (isEdgeHit) {
-        console.log(`[EDGE HIT!] Right paddle FAILSAFE - Sharp angle! hitPosition=${hitPosition.toFixed(2)}`);
-      }
-
-      // 🎯 Enhanced spin for edge hits
-      let spinStrength = currentSpeed >= 10 ? 1.05 : 1.575; // Base spin strength (reduced to 30% of original)
-      if (isEdgeHit) {
-        spinStrength *= 1.8; // 80% more spin on edge hits
-
-        // 🎯 Broadcast edge hit to clients for visual effects
-        this.sendToPlayer(this.player1.ws, { type: 'edge_hit', side: 'right', hitPosition });
-        this.sendToPlayer(this.player2.ws, { type: 'edge_hit', side: 'right', hitPosition });
-      }
-
-      this.gameState.ballVelocityY += hitPosition * spinStrength;
-
-      // 🎯 Higher Y velocity cap for sharper angles
-      const MAX_Y_VELOCITY = currentSpeed >= 10 ? 8 : 10;
-      this.gameState.ballVelocityY = Math.max(-MAX_Y_VELOCITY, Math.min(MAX_Y_VELOCITY, this.gameState.ballVelocityY));
-
-      const MIN_X_VELOCITY = currentSpeed; // Ball maintains at least current speed
-      if (Math.abs(this.gameState.ballVelocityX) < MIN_X_VELOCITY) {
-        this.gameState.ballVelocityX = Math.sign(this.gameState.ballVelocityX) * MIN_X_VELOCITY;
-      }
-
       this.speedUpBall();
-
-      // 🔥 JUICE: PERFECT HIT = DOUBLE SPEED BONUS!
-      if (isPerfectHit) {
-        this.speedUpBall(); // BONUS speed increase!
-      }
-
-      // 🚀 ULTIMATE: POWER HIT - Apply massive speed boost if active
-      if (this.powerHitPlayer === 2) {
-        console.log('💥 POWER HIT triggered on right paddle FAILSAFE - SPEED BOOST!');
-        this.speedUpBall();
-        this.speedUpBall();
-        this.speedUpBall(); // 3x speed boost!
-        this.powerHitPlayer = null; // Clear after use
-      }
+      this.speedUpBall();
+      this.powerHitPlayer = null;
     }
 
-    // 🛡️ SUPER-FAILSAFE: Catch balls that have COMPLETELY PASSED THROUGH right paddle
-    // This handles extreme cases where ball jumps so far it skips ALL detection zones
-    if (
-      !rightPaddleHit && // Haven't registered a hit yet
-      this.gameState.ballVelocityX > 0 && // Moving right
-      this.gameState.ballX > paddle2Left && // Ball is now PAST the paddle (to the right)
-      this.prevBallX <= paddle2Right // Ball WAS in front of or intersecting paddle last frame
-    ) {
-      // Check if ball's path intersected paddle's Y range at ANY point
-      const ballTopNow = this.gameState.ballY - GAME_CONFIG.BALL_SIZE / 2;
-      const ballBottomNow = this.gameState.ballY + GAME_CONFIG.BALL_SIZE / 2;
-      const ballTopPrev = this.prevBallY - GAME_CONFIG.BALL_SIZE / 2;
-      const ballBottomPrev = this.prevBallY + GAME_CONFIG.BALL_SIZE / 2;
+    // BEAR CURVE: the swing through the ball
+    this.ballSpin = spinFromSwing(this.swingVelocity(seat), RANKED_CURVE);
+    this.ballAge = 0;
+    this.passed = null;
 
-      // Check if ball's Y range (current or previous) overlaps paddle's Y range
-      const currentOverlap = ballBottomNow >= paddle2Top && ballTopNow <= paddle2Bottom;
-      const prevOverlap = ballBottomPrev >= paddle2Top && ballTopPrev <= paddle2Bottom;
-
-      if (currentOverlap || prevOverlap) {
-        console.log(`[SUPER-FAILSAFE] Right paddle - Ball tunneled through! Forcing bounce. ballX=${this.gameState.ballX.toFixed(1)}, prevBallX=${this.prevBallX.toFixed(1)}`);
-
-        // FORCE BOUNCE - Ball hit the paddle but tunneled through
-        this.gameState.ballVelocityX = -Math.abs(this.gameState.ballVelocityX);
-        this.gameState.ballX = paddle2Left - GAME_CONFIG.BALL_SIZE / 2 - 2;
-
-        // Add spin based on current Y position
-        const paddleCenter = (paddle2Top + paddle2Bottom) / 2;
-        const hitPosition = (this.gameState.ballY - paddleCenter) / (GAME_CONFIG.PADDLE_HEIGHT / 2);
-        let spinStrength = currentSpeed >= 10 ? 1.05 : 1.575;
-        this.gameState.ballVelocityY += hitPosition * spinStrength;
-
-        const MAX_Y_VELOCITY = currentSpeed >= 10 ? 8 : 10;
-        this.gameState.ballVelocityY = Math.max(-MAX_Y_VELOCITY, Math.min(MAX_Y_VELOCITY, this.gameState.ballVelocityY));
-
-        const MIN_X_VELOCITY = currentSpeed;
-        if (Math.abs(this.gameState.ballVelocityX) < MIN_X_VELOCITY) {
-          this.gameState.ballVelocityX = Math.sign(this.gameState.ballVelocityX) * MIN_X_VELOCITY;
-        }
-
-        this.speedUpBall();
-
-        if (this.powerHitPlayer === 2) {
-          console.log('💥 POWER HIT triggered on right paddle SUPER-FAILSAFE - SPEED BOOST!');
-          this.speedUpBall();
-          this.speedUpBall();
-          this.speedUpBall(); // 3x speed boost!
-          this.powerHitPlayer = null;
-        }
-      }
+    if (isEdgeHit) {
+      this.sendToPlayer(this.player1.ws, { type: 'edge_hit', side, hitPosition });
+      this.sendToPlayer(this.player2.ws, { type: 'edge_hit', side, hitPosition });
     }
+    const hit = {
+      type: 'paddle_hit' as const,
+      side,
+      hitPosition,
+      perfect: isPerfectHit,
+      edge: isEdgeHit,
+      power,
+      spin: this.ballSpin,
+      x: c.face,
+      y: c.crossY,
+      late: now - c.since,
+    };
+    // protocol 2 only: an old client would log every unknown message it gets
+    if (this.v2(1)) this.sendToPlayer(this.player1.ws, hit);
+    if (this.v2(2)) this.sendToPlayer(this.player2.ws, hit);
 
-    // Check for scoring (ball went off left or right edge)
-    if (this.gameState.ballX <= 0) {
-      // Player 2 scored (ball went off left)
-      this.gameState.score2++;
-      console.log(`🎯 Player 2 scored! Score: ${this.gameState.score1} - ${this.gameState.score2}`);
-
-      // 🔄 REFRESH POWER-UPS: Clear used ultimates so players can use them again
-      this.player1UsedUltimates.clear();
-      this.player2UsedUltimates.clear();
-      this.sendToPlayer(this.player1.ws, { type: 'powerups_refreshed' });
-      this.sendToPlayer(this.player2.ws, { type: 'powerups_refreshed' });
-      console.log('🔄 Power-ups refreshed for both players!');
-
-      // Check for game over BEFORE starting countdown
-      if (this.gameState.score2 >= GAME_CONFIG.WINNING_SCORE) {
-        console.log(`🏆 GAME OVER! Player 2 wins with score ${this.gameState.score2} >= ${GAME_CONFIG.WINNING_SCORE}`);
-        this.endGame('right');
-        return; // Don't start countdown if game is over
-      }
-
-      console.log(`📊 Starting countdown (score not yet at ${GAME_CONFIG.WINNING_SCORE})`);
-      this.startScoreCountdown(); // 🎉 Start flashy countdown!
-    } else if (this.gameState.ballX >= GAME_CONFIG.CANVAS_WIDTH) {
-      // Player 1 scored (ball went off right)
-      this.gameState.score1++;
-      console.log(`🎯 Player 1 scored! Score: ${this.gameState.score1} - ${this.gameState.score2}`);
-
-      // 🔄 REFRESH POWER-UPS: Clear used ultimates so players can use them again
-      this.player1UsedUltimates.clear();
-      this.player2UsedUltimates.clear();
-      this.sendToPlayer(this.player1.ws, { type: 'powerups_refreshed' });
-      this.sendToPlayer(this.player2.ws, { type: 'powerups_refreshed' });
-      console.log('🔄 Power-ups refreshed for both players!');
-
-      // Check for game over BEFORE starting countdown
-      if (this.gameState.score1 >= GAME_CONFIG.WINNING_SCORE) {
-        console.log(`🏆 GAME OVER! Player 1 wins with score ${this.gameState.score1} >= ${GAME_CONFIG.WINNING_SCORE}`);
-        this.endGame('left');
-        return; // Don't start countdown if game is over
-      }
-
-      console.log(`📊 Starting countdown (score not yet at ${GAME_CONFIG.WINNING_SCORE})`);
-      this.startScoreCountdown(); // 🎉 Start flashy countdown!
-    }
+    // hit-stop: the ball sticks to the face for a beat (a late hit has
+    // already been sitting there - it is never held longer for being late)
+    c.hitAt = now;
+    c.releaseAt = Math.max(now, c.since + (isPerfectHit || isEdgeHit || power ? BIG_HITSTOP_MS : HITSTOP_MS));
+    this.gameState.ballX = c.face;
+    this.gameState.ballY = c.crossY;
   }
 
   /**
-   * Increase ball speed up to max AND shrink paddles progressively
+   * The defender's swing at contact, px per 60Hz tick, from their OWN
+   * timestamps (arrival times are bunched by the network; the client's clock
+   * says when the paddle was actually there).
    */
-  private speedUpBall() {
-    const currentSpeed = Math.sqrt(
-      this.gameState.ballVelocityX ** 2 + this.gameState.ballVelocityY ** 2
-    );
+  private swingVelocity(seat: Seat): number {
+    const s = this.samples[seat];
+    if (s.length < 2) return 0;
+    const last = s[s.length - 1];
+    for (let i = s.length - 2; i >= 0; i--) {
+      const dt = last.ct - s[i].ct;
+      if (dt >= 30) {
+        if (dt > 160) return 0; // the paddle has been still
+        return ((last.y - s[i].y) / dt) * (1000 / 60);
+      }
+    }
+    return 0;
+  }
 
+  private scoreFor(seat: Seat) {
+    if (seat === 2) this.gameState.score2++;
+    else this.gameState.score1++;
+    console.log(`🎯 Player ${seat} scored! Score: ${this.gameState.score1} - ${this.gameState.score2}`);
+
+    this.player1UsedUltimates.clear();
+    this.player2UsedUltimates.clear();
+    this.sendToPlayer(this.player1.ws, { type: 'powerups_refreshed' });
+    this.sendToPlayer(this.player2.ws, { type: 'powerups_refreshed' });
+
+    const score = seat === 2 ? this.gameState.score2 : this.gameState.score1;
+    if (score >= GAME_CONFIG.WINNING_SCORE) {
+      this.endGame(seat === 2 ? 'right' : 'left');
+      return;
+    }
+    this.startScoreCountdown();
+  }
+
+  /** Increase ball speed up to max AND shrink paddles (cosmetic) progressively. */
+  private speedUpBall() {
+    const currentSpeed = Math.hypot(this.gameState.ballVelocityX, this.gameState.ballVelocityY);
     if (currentSpeed < GAME_CONFIG.MAX_BALL_SPEED) {
-      // 🚀 AGGRESSIVE SPEED INCREASE: Fixed multiplier for consistent ramping
-      const speedMultiplier = 1 + GAME_CONFIG.BALL_SPEED_INCREMENT;
-      const newVelX = this.gameState.ballVelocityX * speedMultiplier;
-      const newVelY = this.gameState.ballVelocityY * speedMultiplier;
-      
-      // Calculate new speed and cap at max
-      const newSpeed = Math.sqrt(newVelX ** 2 + newVelY ** 2);
-      if (newSpeed <= GAME_CONFIG.MAX_BALL_SPEED) {
+      const k = 1 + GAME_CONFIG.BALL_SPEED_INCREMENT;
+      const newVelX = this.gameState.ballVelocityX * k;
+      const newVelY = this.gameState.ballVelocityY * k;
+      if (Math.hypot(newVelX, newVelY) <= GAME_CONFIG.MAX_BALL_SPEED) {
         this.gameState.ballVelocityX = newVelX;
         this.gameState.ballVelocityY = newVelY;
       } else {
-        // Cap at max speed while preserving direction
         const angle = Math.atan2(this.gameState.ballVelocityY, this.gameState.ballVelocityX);
         this.gameState.ballVelocityX = Math.cos(angle) * GAME_CONFIG.MAX_BALL_SPEED;
         this.gameState.ballVelocityY = Math.sin(angle) * GAME_CONFIG.MAX_BALL_SPEED;
       }
     }
-
-    // 🔥 SHRINK PADDLES progressively (down to 33% minimum)
-    if (this.gameState.paddle1Height > GAME_CONFIG.MIN_PADDLE_HEIGHT) {
-      this.gameState.paddle1Height = Math.max(
-        GAME_CONFIG.MIN_PADDLE_HEIGHT,
-        this.gameState.paddle1Height - GAME_CONFIG.PADDLE_SHRINK_PER_HIT
-      );
-    }
-    if (this.gameState.paddle2Height > GAME_CONFIG.MIN_PADDLE_HEIGHT) {
-      this.gameState.paddle2Height = Math.max(
-        GAME_CONFIG.MIN_PADDLE_HEIGHT,
-        this.gameState.paddle2Height - GAME_CONFIG.PADDLE_SHRINK_PER_HIT
-      );
-    }
+    this.gameState.paddle1Height = Math.max(GAME_CONFIG.MIN_PADDLE_HEIGHT, this.gameState.paddle1Height - GAME_CONFIG.PADDLE_SHRINK_PER_HIT);
+    this.gameState.paddle2Height = Math.max(GAME_CONFIG.MIN_PADDLE_HEIGHT, this.gameState.paddle2Height - GAME_CONFIG.PADDLE_SHRINK_PER_HIT);
   }
 
-  /**
-   * Reset ball to center after scoring
-   */
-  /**
-   * 🎉 Start flashy 3-2-1-GO! countdown after scoring
-   */
+  /** 🎉 3-2-1-GO after each goal (the ball waits on the line meanwhile). */
   private startScoreCountdown() {
-    console.log("🎉 Starting score countdown: 3... 2... 1... GO!");
-    
-    // Pause the game
     this.isPaused = true;
-    
-    // Reset countdown
+    this.contact = null;
     this.scoreCountdown = 3;
-    
-    // Send initial countdown (3)
-    this.sendToPlayer(this.player1.ws, { type: "countdown", count: this.scoreCountdown });
-    this.sendToPlayer(this.player2.ws, { type: "countdown", count: this.scoreCountdown });
-    
-    // Start countdown interval
+    this.sendToPlayer(this.player1.ws, { type: 'countdown', count: this.scoreCountdown });
+    this.sendToPlayer(this.player2.ws, { type: 'countdown', count: this.scoreCountdown });
+
     this.scoreCountdownInterval = setInterval(() => {
+      if (this.ended) return this.clearScoreCountdown();
       this.scoreCountdown--;
-      
       if (this.scoreCountdown > 0) {
-        // Send countdown numbers (2, 1)
-        this.sendToPlayer(this.player1.ws, { type: "countdown", count: this.scoreCountdown });
-        this.sendToPlayer(this.player2.ws, { type: "countdown", count: this.scoreCountdown });
+        this.sendToPlayer(this.player1.ws, { type: 'countdown', count: this.scoreCountdown });
+        this.sendToPlayer(this.player2.ws, { type: 'countdown', count: this.scoreCountdown });
       } else {
-        // Send GO! (count = 0)
-        this.sendToPlayer(this.player1.ws, { type: "countdown", count: 0 });
-        this.sendToPlayer(this.player2.ws, { type: "countdown", count: 0 });
-        
-        // Stop countdown and resume game
-        if (this.scoreCountdownInterval) {
-          clearInterval(this.scoreCountdownInterval);
-          this.scoreCountdownInterval = null;
-        }
-        
-        // Reset ball and resume
+        this.sendToPlayer(this.player1.ws, { type: 'countdown', count: 0 });
+        this.sendToPlayer(this.player2.ws, { type: 'countdown', count: 0 });
+        this.clearScoreCountdown();
         this.resetBall();
         this.isPaused = false;
-        
-        console.log("🎉 Countdown complete - game resumed!");
       }
-    }, 1000); // 1 second intervals
+    }, 1000);
+  }
+
+  private clearScoreCountdown() {
+    if (this.scoreCountdownInterval) {
+      clearInterval(this.scoreCountdownInterval);
+      this.scoreCountdownInterval = null;
+    }
   }
 
   private resetBall() {
     this.gameState.ballX = GAME_CONFIG.CANVAS_WIDTH / 2;
     this.gameState.ballY = GAME_CONFIG.CANVAS_HEIGHT / 2;
-
-    // Reset previous position tracking
     this.prevBallX = this.gameState.ballX;
     this.prevBallY = this.gameState.ballY;
-
-    // Random direction
     const angle = (Math.random() * Math.PI / 2) - Math.PI / 4; // -45 to 45 degrees
     const direction = Math.random() > 0.5 ? 1 : -1;
-
     this.gameState.ballVelocityX = Math.cos(angle) * GAME_CONFIG.INITIAL_BALL_SPEED * direction;
     this.gameState.ballVelocityY = Math.sin(angle) * GAME_CONFIG.INITIAL_BALL_SPEED;
+    this.ballSpin = 0;
+    this.ballAge = 0;
+    this.passed = null;
+    this.contact = null;
   }
 
-  /**
-   * End the game and notify players
-   */
   private endGame(winner: 'left' | 'right') {
     console.log(`🏆 Game over! Winner: ${winner}`);
-
-    // Stop game loop
-    if (this.gameLoop) {
-      clearInterval(this.gameLoop);
-      this.gameLoop = null;
-    }
-
-    // Send game over message to both players
-    console.log(`💰 [SERVER] Sending game_over - finalBetAmount: ${this.finalBetAmount}`);
+    this.ended = true;
+    this.stopLoops();
     const message = {
       type: 'game_over' as const,
       winner,
-      finalScore: {
-        left: this.gameState.score1,
-        right: this.gameState.score2,
-      },
+      finalScore: { left: this.gameState.score1, right: this.gameState.score2 },
       betAmount: this.finalBetAmount,
     };
-
-    console.log(`💰 [SERVER] game_over message:`, JSON.stringify(message));
+    // the final score first, then the result (old clients read either order)
+    this.broadcastGameState();
     this.sendToPlayer(this.player1.ws, message);
     this.sendToPlayer(this.player2.ws, message);
   }
 
-  /**
-   * Update paddle position for a player
-   */
-  updatePaddlePosition(playerWs: WebSocket, y: number) {
-    // Clamp paddle position to canvas bounds (Y is center of paddle)
-    const clampedY = Math.max(
-      GAME_CONFIG.PADDLE_HEIGHT / 2,
-      Math.min(GAME_CONFIG.CANVAS_HEIGHT - GAME_CONFIG.PADDLE_HEIGHT / 2, y)
-    );
-
-    if (playerWs === this.player1.ws) {
-      this.gameState.paddle1Y = clampedY;
-    } else if (playerWs === this.player2.ws) {
-      this.gameState.paddle2Y = clampedY;
-    }
+  private clampPaddle(y: number): number {
+    return Math.max(GAME_CONFIG.PADDLE_HEIGHT / 2, Math.min(GAME_CONFIG.CANVAS_HEIGHT - GAME_CONFIG.PADDLE_HEIGHT / 2, y));
   }
 
-  /**
-   * Broadcast current game state to both players
-   */
+  /** A paddle position arrived (y is the paddle's centre). */
+  updatePaddlePosition(playerWs: WebSocket, y: number, timestamp?: number) {
+    const seat = this.seatOf(playerWs);
+    if (!seat || !Number.isFinite(y)) return;
+    const clampedY = this.clampPaddle(y);
+    if (seat === 1) this.gameState.paddle1Y = clampedY;
+    else this.gameState.paddle2Y = clampedY;
+
+    const at = Date.now();
+    const list = this.samples[seat];
+    const ct = Number.isFinite(timestamp) ? Number(timestamp) : at;
+    // client clocks only ever move forward for one client; ignore a regression
+    list.push({ at, ct: list.length && ct < list[list.length - 1].ct ? list[list.length - 1].ct : ct, y: clampedY });
+    while (list.length > 2 && at - list[0].at > SAMPLE_MEMORY_MS) list.shift();
+  }
+
   private broadcastGameState() {
-    const message = {
-      type: 'game_state' as const,
-      state: this.gameState,
-    };
-
+    this.gameState.ballSpin = this.ballSpin;
+    this.gameState.hold = !!this.contact;
+    const message = { type: 'game_state' as const, state: this.gameState };
     this.sendToPlayer(this.player1.ws, message);
     this.sendToPlayer(this.player2.ws, message);
   }
 
-  /**
-   * Send message to a player (with error handling)
-   */
   private sendToPlayer(ws: WebSocket, message: any) {
     try {
-      if (ws.readyState === ws.OPEN) {
-        ws.send(JSON.stringify(message));
-      }
+      if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(message));
     } catch (error) {
       console.error('Error sending message to player:', error);
     }
   }
 
   /**
-   * Handle player disconnect
-   * @param playerWs - WebSocket of the disconnecting player
-   * @param isGracefulLeave - If true, player intentionally left (don't notify opponent)
+   * A player left. A deliberate `leave` AFTER the match is over (results
+   * screen, back to the park) tells nobody - but a leave or a drop while
+   * the match is still running always tells the rival, who has won.
    */
   handleDisconnect(playerWs: WebSocket, isGracefulLeave: boolean = false) {
-    console.log(`👋 Player ${isGracefulLeave ? 'gracefully left' : 'disconnected from'} game`);
-
-    // Stop game
-    if (this.gameLoop) {
-      clearInterval(this.gameLoop);
-      this.gameLoop = null;
-    }
-    if (this.countdownInterval) {
-      clearInterval(this.countdownInterval);
-      this.countdownInterval = null;
-    }
-    if (this.bettingTimer) {
-      clearTimeout(this.bettingTimer);
-      this.bettingTimer = null;
-    }
-
-    // ✅ FIX: Only notify other player if this was an unexpected disconnect (crash)
-    // Don't notify if player intentionally left (clicked "Back to BEARpark" or "Tap to Retry")
-    if (!isGracefulLeave) {
+    const midMatch = this.started && !this.ended;
+    console.log(`👋 Player ${isGracefulLeave ? 'left' : 'disconnected'}${midMatch ? ' mid-match' : ''}`);
+    const wasEnded = this.ended;
+    this.ended = true;
+    this.stopLoops();
+    if (!wasEnded && (!isGracefulLeave || midMatch)) {
       const otherPlayer = playerWs === this.player1.ws ? this.player2 : this.player1;
       this.sendToPlayer(otherPlayer.ws, { type: 'opponent_disconnected' });
-      console.log('📢 Notified opponent of disconnect');
-    } else {
-      console.log('✅ Graceful leave - opponent stays in game');
     }
   }
 
-  /**
-   * Clean up resources
-   */
-  cleanup() {
+  private stopLoops() {
     if (this.gameLoop) {
       clearInterval(this.gameLoop);
       this.gameLoop = null;
+    }
+    if (this.pingLoop) {
+      clearInterval(this.pingLoop);
+      this.pingLoop = null;
     }
     if (this.countdownInterval) {
       clearInterval(this.countdownInterval);
@@ -1052,11 +670,13 @@ export class GameSession {
       clearTimeout(this.bettingTimer);
       this.bettingTimer = null;
     }
+    this.clearScoreCountdown();
   }
 
-  /**
-   * Get player websocket references
-   */
+  cleanup() {
+    this.stopLoops();
+  }
+
   getPlayers() {
     return [this.player1.ws, this.player2.ws];
   }

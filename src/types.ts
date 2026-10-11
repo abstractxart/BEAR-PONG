@@ -24,7 +24,12 @@ export interface PlayerData {
   displayName: string;
   avatarUrl?: string;
   equippedCosmetics?: EquippedCosmetics;
+  /** client protocol version (2 = speaks ping/pong, paddle_hit, hold, ballSpin) */
+  protocol?: number;
 }
+
+/** This server's protocol version, announced in match_found. */
+export const SERVER_PROTOCOL = 2;
 
 // Game state sent from server to clients
 export interface GameState {
@@ -40,6 +45,10 @@ export interface GameState {
   score2: number;
   gameStarted: boolean;
   countdown?: number; // 3, 2, 1, null
+  /** BEAR CURVE: the ball's spin (rad/tick, signed) */
+  ballSpin?: number;
+  /** the ball is held at a paddle face: hit-stop, or awaiting a late paddle */
+  hold?: boolean;
 }
 
 // Ultimate ability types
@@ -54,12 +63,15 @@ export type ClientMessage =
   | { type: 'ready' }
   | { type: 'use_ultimate'; abilityType: UltimateAbilityType }
   | { type: 'rematch' }
-  | { type: 'leave' };
+  | { type: 'leave' }
+  | { type: 'pong'; t: number };
 
 // Server -> Client messages
 export type ServerMessage =
   | { type: 'queue_joined'; position: number }
-  | { type: 'match_found'; opponent: PlayerData; yourSide: 'left' | 'right' }
+  | { type: 'match_found'; opponent: PlayerData; yourSide: 'left' | 'right'; serverVersion?: number }
+  | { type: 'ping'; t: number }
+  | { type: 'paddle_hit'; side: 'left' | 'right'; hitPosition: number; perfect: boolean; edge: boolean; power: boolean; spin: number; x: number; y: number; late: number }
   | { type: 'opponent_bet_set'; amount: number }
   | { type: 'opponent_ready' }
   | { type: 'final_bet_amount'; amount: number }

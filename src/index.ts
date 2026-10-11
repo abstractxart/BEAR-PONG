@@ -4,7 +4,7 @@
  */
 import { WebSocketServer, WebSocket } from 'ws';
 import { GameSession } from './GameSession.js';
-import type { ClientMessage, PlayerData } from './types.js';
+import { SERVER_PROTOCOL, type ClientMessage, type PlayerData } from './types.js';
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 8080;
 
@@ -56,7 +56,11 @@ async function handleClientMessage(ws: WebSocket, message: ClientMessage) {
       break;
 
     case 'paddle_move':
-      handlePaddleMove(ws, message.y);
+      handlePaddleMove(ws, message.y, message.timestamp);
+      break;
+
+    case 'pong':
+      activeSessions.get(ws)?.handlePong(ws, message.t);
       break;
 
     case 'set_bet':
@@ -155,6 +159,12 @@ async function handleJoinQueue(ws: WebSocket, playerData: PlayerData) {
     return;
   }
 
+  // A finished match no longer holds its sockets: they may queue again
+  const old = activeSessions.get(ws);
+  if (old?.ended) {
+    old.getPlayers().forEach((p) => { if (activeSessions.get(p) === old) activeSessions.delete(p); });
+  }
+
   // Check if player is already in a game
   if (activeSessions.has(ws)) {
     console.log('⚠️ Player already in a game');
@@ -210,12 +220,14 @@ function tryMatchmaking() {
       type: 'match_found',
       opponent: player2.data,
       yourSide: 'left',
+      serverVersion: SERVER_PROTOCOL,
     });
 
     sendToClient(player2.ws, {
       type: 'match_found',
       opponent: player1.data,
       yourSide: 'right',
+      serverVersion: SERVER_PROTOCOL,
     });
 
     // Create game session
@@ -263,10 +275,10 @@ function handleUseUltimate(ws: WebSocket, abilityType: string) {
 /**
  * Handle paddle movement
  */
-function handlePaddleMove(ws: WebSocket, y: number) {
+function handlePaddleMove(ws: WebSocket, y: number, timestamp?: number) {
   const session = activeSessions.get(ws);
   if (session) {
-    session.updatePaddlePosition(ws, y);
+    session.updatePaddlePosition(ws, Number(y), timestamp);
   }
 }
 
