@@ -40,7 +40,7 @@ type Seat = 1 | 2;
 export interface SessionOptions {
   /** first to this many points (ranked: GAME_CONFIG.WINNING_SCORE) */
   winScore?: number;
-  /** a private room: unrated, no honey (the clients are told in match_found) */
+  /** a private room: unrated (the clients are told in match_found) */
   private?: boolean;
   /** the room code, for a private match */
   room?: string;

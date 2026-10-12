@@ -9,7 +9,7 @@
  *                 lets it time out leaves the queue; whoever accepted goes
  *                 straight back to the FRONT of it.
  *   rooms         private matches: a 5-letter code (and share link) - the host
- *                 waits, a friend joins, the match starts. Unrated, no honey.
+ *                 waits, a friend joins, the match starts. Unrated (no ladder).
  *   rematch       after a private match both press REMATCH: the same two again,
  *                 sides swapped. (Not after ranked: guaranteed pairings would
  *                 let two friends trade wins up the ladder.)
