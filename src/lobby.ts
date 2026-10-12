@@ -33,8 +33,9 @@ export type Match = GameSession | ChaosSession;
 interface Queued extends Seat { since: number; mmr: number; mode: GameMode }
 interface Room { code: string; host: Seat; winScore: number; created: number; mode: GameMode }
 
-/** first to: a chaos match is longer and wilder per point */
-export const DEFAULT_WIN: Record<GameMode, number> = { chaos: 5, classic: GAME_CONFIG.WINNING_SCORE };
+/** first to: CHAOS is the main game - first to 7 (about a minute and a half of
+ *  play, room for 4-5 experiments; the owner's call, 2026-10-12) */
+export const DEFAULT_WIN: Record<GameMode, number> = { chaos: 7, classic: GAME_CONFIG.WINNING_SCORE };
 interface ClientInfo { protocol: number; joins: number[]; lastEmote: number }
 
 /** Room codes: no I, O, 0 or 1 - nothing to misread when a friend reads it out. */

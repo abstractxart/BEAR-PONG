@@ -25,7 +25,7 @@ function advance(ms) {
 }
 
 const dist = process.argv[2] ?? fileURLToPath(new URL("../dist", import.meta.url));
-const { Lobby, cleanPlayer, mmrWindow, normaliseCode, ROOM_ALPHABET, ROOM_CODE_LENGTH, ROOM_TTL_MS } = await import(pathToFileURL(dist + "/lobby.js").href);
+const { DEFAULT_WIN, Lobby, cleanPlayer, mmrWindow, normaliseCode, ROOM_ALPHABET, ROOM_CODE_LENGTH, ROOM_TTL_MS } = await import(pathToFileURL(dist + "/lobby.js").href);
 
 let names = 0;
 function sock() { return { OPEN: 1, readyState: 1, sent: [], send(m) { this.sent.push(JSON.parse(m)); }, name: `ws${++names}` }; }
@@ -289,7 +289,7 @@ test("CHAOS and CLASSIC have separate queues: players only meet their own game",
   const m = last(a, "match_found");
   assert.equal(m.opponent.displayName, "C");
   assert.equal(m.mode, "chaos");
-  assert.equal(m.winScore, 5, "chaos is first to 5");
+  assert.equal(m.winScore, 7, "chaos is first to 7");
   assert.equal(L.sessionOf(a).mode, "chaos");
 });
 
@@ -344,7 +344,7 @@ test("a CHAOS match: both accept, the lab's snapshots stream, abilities are once
   for (let i = 0; i < 400 && !s.ended; i++) advance(1000);
   assert.ok(s.ended && s.completed, "played to the end");
   const over = last(a, "game_over");
-  assert.ok(over && Math.max(over.finalScore.left, over.finalScore.right) === 5);
+  assert.ok(over && Math.max(over.finalScore.left, over.finalScore.right) === DEFAULT_WIN.chaos, "first to 7");
   assert.deepEqual(last(b, "game_over").finalScore, over.finalScore);
 });
 
