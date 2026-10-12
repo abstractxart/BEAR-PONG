@@ -23,13 +23,22 @@ export interface PlayerData {
   wallet: string;
   displayName: string;
   avatarUrl?: string;
+  avatarIsAnimated?: boolean;
   equippedCosmetics?: EquippedCosmetics;
-  /** client protocol version (2 = speaks ping/pong, paddle_hit, hold, ballSpin) */
+  /**
+   * client protocol version: 2 = ping/pong, paddle_hit, hold, ballSpin;
+   * 3 = hello/lobby_status, accept + decline, private rooms, rematch, emotes
+   */
   protocol?: number;
+  /** the player's ranked rating, as their client reports it (matchmaking + the rival's card) */
+  rank?: { mmr: number; games: number };
 }
 
-/** This server's protocol version, announced in match_found. */
-export const SERVER_PROTOCOL = 2;
+/** This server's protocol version, announced in match_found and welcome. */
+export const SERVER_PROTOCOL = 3;
+
+/** Quick-chat emotes: the ids a client may send (the client owns the words). */
+export const EMOTE_COUNT = 8;
 
 // Game state sent from server to clients
 export interface GameState {
@@ -66,7 +75,15 @@ export type ClientMessage =
   | { type: 'use_ultimate'; abilityType: UltimateAbilityType }
   | { type: 'rematch' }
   | { type: 'leave' }
-  | { type: 'pong'; t: number };
+  | { type: 'pong'; t: number }
+  // protocol 3
+  | { type: 'hello'; protocol?: number }
+  | { type: 'leave_queue' }
+  | { type: 'decline_match' }
+  | { type: 'create_room'; data: PlayerData; winScore?: number }
+  | { type: 'join_room'; code: string; data: PlayerData }
+  | { type: 'leave_room' }
+  | { type: 'emote'; id: number };
 
 // Server -> Client messages
 export type ServerMessage =

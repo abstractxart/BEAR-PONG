@@ -1,48 +1,57 @@
 /**
  * BEARpark Pong Multiplayer Server
- * Handles WebSocket connections, matchmaking, and game sessions
+ * Handles WebSocket connections, and hands everything between "connected"
+ * and "playing" to the Lobby (lobby.ts): presence, the skill-matched queue,
+ * accept / decline, private rooms, rematches and emotes. A match itself is a
+ * GameSession.
+ *
+ * Protocol 1 and 2 clients keep working unchanged; protocol 3 clients send
+ * `hello` and get the lobby's extras.
  */
 import { WebSocketServer, WebSocket } from 'ws';
-import { GameSession } from './GameSession.js';
-import { SERVER_PROTOCOL, type ClientMessage, type PlayerData } from './types.js';
+import { cleanPlayer, Lobby } from './lobby.js';
+import { type ClientMessage, type PlayerData } from './types.js';
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 8080;
+/** a message bigger than this is not a pong message */
+const MAX_MESSAGE_BYTES = 8 * 1024;
 
-// Store for matchmaking queue
-const matchmakingQueue: Array<{ ws: WebSocket; data: PlayerData }> = [];
-
-// Active game sessions
-const activeSessions = new Map<WebSocket, GameSession>();
-
-// Create WebSocket server
-const wss = new WebSocketServer({ port: PORT });
+const wss = new WebSocketServer({ port: PORT, maxPayload: 64 * 1024 });
 
 console.log(`🎮 BEARpark Pong Server started on port ${PORT}`);
+
+const lobby = new Lobby({
+  send: sendToClient,
+  open: (ws) => ws.readyState === WebSocket.OPEN,
+});
+setInterval(() => lobby.tick(), 500);
 
 /**
  * Handle new WebSocket connection
  */
 wss.on('connection', (ws: WebSocket) => {
-  console.log('🔌 New client connected');
+  lobby.connect(ws);
 
   ws.on('message', (data: Buffer) => {
+    if (data.length > MAX_MESSAGE_BYTES) return;
+    let message: ClientMessage;
     try {
-      const message: ClientMessage = JSON.parse(data.toString());
-      handleClientMessage(ws, message);
+      message = JSON.parse(data.toString());
     } catch (error) {
-      console.error('❌ Error parsing message:', error);
       sendToClient(ws, { type: 'error', message: 'Invalid message format' });
+      return;
+    }
+    try {
+      void handleClientMessage(ws, message);
+    } catch (error) {
+      console.error('❌ Error handling message:', error);
     }
   });
 
-  ws.on('close', () => {
-    console.log('👋 Client disconnected');
-    handleDisconnect(ws);
-  });
-
+  ws.on('close', () => lobby.disconnect(ws));
   ws.on('error', (error) => {
     console.error('❌ WebSocket error:', error);
-    handleDisconnect(ws);
+    lobby.disconnect(ws);
   });
 });
 
@@ -50,41 +59,81 @@ wss.on('connection', (ws: WebSocket) => {
  * Handle messages from clients
  */
 async function handleClientMessage(ws: WebSocket, message: ClientMessage) {
+  if (!message || typeof message !== 'object') return;
   switch (message.type) {
-    case 'join_queue':
-      await handleJoinQueue(ws, message.data);
+    // ---------------------------------------------------------------- lobby
+    case 'hello':
+      lobby.hello(ws, message.protocol);
       break;
 
-    case 'paddle_move':
-      handlePaddleMove(ws, message.y, message.timestamp);
+    case 'join_queue': {
+      const data = await enrich(message.data);
+      if (ws.readyState === WebSocket.OPEN) lobby.joinQueue(ws, data);
+      break;
+    }
+
+    case 'leave_queue':
+      lobby.leaveQueue(ws);
       break;
 
-    case 'pong':
-      activeSessions.get(ws)?.handlePong(ws, message.t);
+    case 'create_room': {
+      const data = await enrich(message.data);
+      if (ws.readyState === WebSocket.OPEN) lobby.createRoom(ws, data, message.winScore);
+      break;
+    }
+
+    case 'join_room': {
+      const data = await enrich(message.data);
+      if (ws.readyState === WebSocket.OPEN) lobby.joinRoom(ws, message.code, data);
+      break;
+    }
+
+    case 'leave_room':
+      lobby.leaveRoom(ws);
+      break;
+
+    // ------------------------------------------------------- before a match
+    case 'ready_to_start':
+      lobby.accept(ws);
+      break;
+
+    case 'decline_match':
+      lobby.decline(ws);
       break;
 
     case 'set_bet':
-      handleSetBet(ws, message.amount);
+      // betting is retired; kept so an old client's flow still completes
+      lobby.sessionOf(ws)?.handleSetBet(ws, Number(message.amount) || 0);
       break;
 
-    case 'ready_to_start':
-      handleReadyToStart(ws);
+    // ---------------------------------------------------------- in a match
+    case 'paddle_move':
+      lobby.sessionOf(ws)?.updatePaddlePosition(ws, Number(message.y), message.timestamp);
+      break;
+
+    case 'pong':
+      lobby.sessionOf(ws)?.handlePong(ws, message.t);
       break;
 
     case 'use_ultimate':
-      handleUseUltimate(ws, message.abilityType);
+      lobby.sessionOf(ws)?.handleUseUltimate(ws, message.abilityType);
+      break;
+
+    case 'emote':
+      lobby.emote(ws, message.id);
+      break;
+
+    // ---------------------------------------------------------- after a match
+    case 'rematch':
+      lobby.rematch(ws);
       break;
 
     case 'leave':
-      handleLeave(ws);
+      // graceful: out of the queue, the room and the match - the socket stays
+      lobby.disconnect(ws, true);
       break;
 
     case 'ready':
-      // Could be used for "ready up" mechanic before countdown
-      break;
-
-    case 'rematch':
-      // TODO: Implement rematch functionality
       break;
 
     default:
@@ -93,16 +142,40 @@ async function handleClientMessage(ws: WebSocket, message: ClientMessage) {
 }
 
 /**
+ * A player's card for the rival: what their client says, cleaned, plus the
+ * avatar and cosmetics BEARpark has on file for their wallet.
+ */
+async function enrich(raw: unknown): Promise<PlayerData> {
+  const data = cleanPlayer(raw);
+  if (data.wallet.startsWith('guest_')) return data;
+  const [profile, cosmetics] = await Promise.all([fetchPlayerProfile(data.wallet), fetchEquippedCosmetics(data.wallet)]);
+  if (profile.avatarUrl) data.avatarUrl = profile.avatarUrl;
+  data.equippedCosmetics = cosmetics;
+  return data;
+}
+
+/** a profile lookup that takes longer than this is skipped, not waited for */
+const LOOKUP_TIMEOUT_MS = 2500;
+
+async function getJson(url: string): Promise<any> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), LOOKUP_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, { signal: ctrl.signal });
+    return await response.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * Fetch player profile including avatar from BEARpark API
  */
 async function fetchPlayerProfile(walletAddress: string) {
   try {
-    const response = await fetch(`https://bearpark.xyz/api/profile/${walletAddress}`);
-    const data = await response.json() as any;
-
-    if (data.success && data.profile) {
+    const data = await getJson(`https://bearpark.xyz/api/profile/${encodeURIComponent(walletAddress)}`);
+    if (data?.success && data.profile) {
       let avatarUrl = null;
-
       // Parse avatar_nft JSON to get the imageUrl
       if (data.profile.avatar_nft) {
         try {
@@ -113,14 +186,11 @@ async function fetchPlayerProfile(walletAddress: string) {
           avatarUrl = `https://nft.xrpl-labs.com/${data.profile.avatar_nft}`;
         }
       }
-
       return { avatarUrl };
     }
-
-    console.log(`⚠️ Failed to fetch profile for ${walletAddress}`);
     return { avatarUrl: null };
   } catch (error) {
-    console.error(`❌ Error fetching profile for ${walletAddress}:`, error);
+    console.error(`❌ Error fetching profile for ${walletAddress}:`, (error as Error).message);
     return { avatarUrl: null };
   }
 }
@@ -130,194 +200,12 @@ async function fetchPlayerProfile(walletAddress: string) {
  */
 async function fetchEquippedCosmetics(walletAddress: string) {
   try {
-    const response = await fetch(`https://www.bearpark.xyz/api/cosmetics/equipped/${walletAddress}`);
-    const data = await response.json() as any;
-
-    if (data.success) {
-      console.log(`✅ Fetched cosmetics for ${walletAddress}:`, data.equipped);
-      return data.equipped;
-    }
-
-    console.log(`⚠️ Failed to fetch cosmetics for ${walletAddress}:`, data);
+    const data = await getJson(`https://www.bearpark.xyz/api/cosmetics/equipped/${encodeURIComponent(walletAddress)}`);
+    if (data?.success) return data.equipped;
     return { ring: null, banner: null };
   } catch (error) {
-    console.error(`❌ Error fetching cosmetics for ${walletAddress}:`, error);
+    console.error(`❌ Error fetching cosmetics for ${walletAddress}:`, (error as Error).message);
     return { ring: null, banner: null };
-  }
-}
-
-/**
- * Handle player joining the matchmaking queue
- */
-async function handleJoinQueue(ws: WebSocket, playerData: PlayerData) {
-  console.log(`🎯 Player joining queue: ${playerData.displayName} (${playerData.wallet})`);
-
-  // Check if player is already in queue
-  const alreadyInQueue = matchmakingQueue.some(p => p.ws === ws);
-  if (alreadyInQueue) {
-    console.log('⚠️ Player already in queue');
-    return;
-  }
-
-  // A finished match no longer holds its sockets: they may queue again
-  const old = activeSessions.get(ws);
-  if (old?.ended) {
-    old.getPlayers().forEach((p) => { if (activeSessions.get(p) === old) activeSessions.delete(p); });
-  }
-
-  // Check if player is already in a game
-  if (activeSessions.has(ws)) {
-    console.log('⚠️ Player already in a game');
-    return;
-  }
-
-  // Fetch player profile (including avatar)
-  const profile = await fetchPlayerProfile(playerData.wallet);
-  if (profile.avatarUrl) {
-    playerData.avatarUrl = profile.avatarUrl;
-    console.log(`🖼️ Loaded avatar for ${playerData.displayName}: ${profile.avatarUrl.substring(0, 50)}...`);
-  }
-
-  // Fetch equipped cosmetics
-  const equippedCosmetics = await fetchEquippedCosmetics(playerData.wallet);
-  playerData.equippedCosmetics = equippedCosmetics;
-
-  console.log(`✨ Loaded cosmetics for ${playerData.displayName}:`, {
-    ring: equippedCosmetics.ring?.name || 'None',
-    banner: equippedCosmetics.banner?.name || 'None'
-  });
-
-  // Add to queue
-  matchmakingQueue.push({ ws, data: playerData });
-
-  // Send queue position
-  sendToClient(ws, {
-    type: 'queue_joined',
-    position: matchmakingQueue.length,
-  });
-
-  console.log(`📊 Queue size: ${matchmakingQueue.length}`);
-
-  // Try to match players
-  tryMatchmaking();
-}
-
-/**
- * Try to create matches from the queue
- */
-function tryMatchmaking() {
-  while (matchmakingQueue.length >= 2) {
-    // Get first two players in queue
-    const player1 = matchmakingQueue.shift()!;
-    const player2 = matchmakingQueue.shift()!;
-
-    console.log(`🎮 Match found! ${player1.data.displayName} vs ${player2.data.displayName}`);
-    console.log(`🖼️ Player 1 avatar: ${player1.data.avatarUrl?.substring(0, 50) || 'NONE'}`);
-    console.log(`🖼️ Player 2 avatar: ${player2.data.avatarUrl?.substring(0, 50) || 'NONE'}`);
-
-    // Notify players of match
-    sendToClient(player1.ws, {
-      type: 'match_found',
-      opponent: player2.data,
-      yourSide: 'left',
-      serverVersion: SERVER_PROTOCOL,
-    });
-
-    sendToClient(player2.ws, {
-      type: 'match_found',
-      opponent: player1.data,
-      yourSide: 'right',
-      serverVersion: SERVER_PROTOCOL,
-    });
-
-    // Create game session
-    const session = new GameSession(player1, player2);
-    activeSessions.set(player1.ws, session);
-    activeSessions.set(player2.ws, session);
-
-    // Start betting lobby (30-second timer)
-    setTimeout(() => {
-      session.startBettingLobby();
-    }, 1000);
-  }
-}
-
-/**
- * 💰 BETTING: Handle player setting their bet
- */
-function handleSetBet(ws: WebSocket, amount: number) {
-  const session = activeSessions.get(ws);
-  if (session) {
-    session.handleSetBet(ws, amount);
-  }
-}
-
-/**
- * 💰 BETTING: Handle player clicking READY
- */
-function handleReadyToStart(ws: WebSocket) {
-  const session = activeSessions.get(ws);
-  if (session) {
-    session.handleReadyToStart(ws);
-  }
-}
-
-/**
- * 🚀 ULTIMATE ABILITIES: Handle player using an ultimate ability
- */
-function handleUseUltimate(ws: WebSocket, abilityType: string) {
-  const session = activeSessions.get(ws);
-  if (session) {
-    session.handleUseUltimate(ws, abilityType as any);
-  }
-}
-
-/**
- * Handle paddle movement
- */
-function handlePaddleMove(ws: WebSocket, y: number, timestamp?: number) {
-  const session = activeSessions.get(ws);
-  if (session) {
-    session.updatePaddlePosition(ws, Number(y), timestamp);
-  }
-}
-
-/**
- * Handle player leaving
- */
-function handleLeave(ws: WebSocket) {
-  console.log('👋 Player requested to leave gracefully');
-  // ✅ FIX: Pass true for graceful leave - don't notify opponent
-  handleDisconnect(ws, true);
-}
-
-/**
- * Handle player disconnect
- * @param ws - WebSocket of disconnecting player
- * @param isGracefulLeave - If true, player intentionally left (don't notify opponent)
- */
-function handleDisconnect(ws: WebSocket, isGracefulLeave: boolean = false) {
-  // Remove from queue if present
-  const queueIndex = matchmakingQueue.findIndex(p => p.ws === ws);
-  if (queueIndex !== -1) {
-    matchmakingQueue.splice(queueIndex, 1);
-    console.log(`📊 Removed from queue. New queue size: ${matchmakingQueue.length}`);
-  }
-
-  // Handle disconnect in active game
-  const session = activeSessions.get(ws);
-  if (session) {
-    // ✅ FIX: Pass graceful leave flag to session
-    session.handleDisconnect(ws, isGracefulLeave);
-
-    // Remove both players from active sessions
-    const players = session.getPlayers();
-    players.forEach(playerWs => {
-      activeSessions.delete(playerWs);
-    });
-
-    session.cleanup();
-    console.log(`🎮 Game session ended due to ${isGracefulLeave ? 'graceful leave' : 'disconnect'}`);
   }
 }
 
@@ -337,31 +225,17 @@ function sendToClient(ws: WebSocket, message: any) {
 /**
  * Graceful shutdown
  */
-process.on('SIGTERM', () => {
-  console.log('🛑 SIGTERM received, shutting down gracefully...');
-
-  wss.close(() => {
-    console.log('✅ WebSocket server closed');
-    process.exit(0);
+for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+  process.on(signal, () => {
+    console.log(`🛑 ${signal} received, shutting down gracefully...`);
+    wss.close(() => {
+      console.log('✅ WebSocket server closed');
+      process.exit(0);
+    });
+    // Force close after 10 seconds
+    setTimeout(() => {
+      console.error('⚠️ Forcing shutdown...');
+      process.exit(1);
+    }, 10000);
   });
-
-  // Force close after 10 seconds
-  setTimeout(() => {
-    console.error('⚠️ Forcing shutdown...');
-    process.exit(1);
-  }, 10000);
-});
-
-process.on('SIGINT', () => {
-  console.log('🛑 SIGINT received, shutting down gracefully...');
-
-  wss.close(() => {
-    console.log('✅ WebSocket server closed');
-    process.exit(0);
-  });
-
-  setTimeout(() => {
-    console.error('⚠️ Forcing shutdown...');
-    process.exit(1);
-  }, 10000);
-});
+}

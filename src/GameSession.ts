@@ -36,6 +36,25 @@ import type { WebSocket } from 'ws';
 
 type Seat = 1 | 2;
 
+/** How a match was made, and what it is played to. */
+export interface SessionOptions {
+  /** first to this many points (ranked: GAME_CONFIG.WINNING_SCORE) */
+  winScore?: number;
+  /** a private room: unrated, no honey (the clients are told in match_found) */
+  private?: boolean;
+  /** the room code, for a private match */
+  room?: string;
+  /**
+   * Protocol 3 ACCEPT window: when both players speak protocol 3, the match
+   * must be accepted (ready_to_start) by BOTH within this many ms, or it is
+   * cancelled and `onUnaccepted` hands the lobby who accepted (they go back to
+   * the front of the queue) and who did not. Older clients keep the old rule:
+   * one READY starts it after 30s.
+   */
+  acceptMs?: number;
+  onUnaccepted?: (accepted: WebSocket[], missing: WebSocket[]) => void;
+}
+
 /** A paddle position as it arrived: server time, the client's own clock, y. */
 interface PaddleSample {
   at: number;
@@ -120,12 +139,21 @@ export class GameSession {
   private ballSpin = 0;
   private ballAge = 0;
 
+  /** first to this many points */
+  readonly winScore: number;
+  readonly options: SessionOptions;
+  /** the match was played to its end (not cancelled, not abandoned): a rematch is possible */
+  completed = false;
+
   constructor(
     player1: { ws: WebSocket; data: PlayerData },
-    player2: { ws: WebSocket; data: PlayerData }
+    player2: { ws: WebSocket; data: PlayerData },
+    options: SessionOptions = {}
   ) {
     this.player1 = player1;
     this.player2 = player2;
+    this.options = options;
+    this.winScore = Math.max(1, Math.min(11, Math.floor(options.winScore ?? GAME_CONFIG.WINNING_SCORE)));
 
     this.gameState = {
       ballX: GAME_CONFIG.CANVAS_WIDTH / 2,
@@ -145,9 +173,38 @@ export class GameSession {
     };
   }
 
-  /** Is this the session for a client that speaks protocol 2? */
+  /** Does this seat's client speak protocol 2 (ping/pong, paddle_hit, hold)? */
   private v2(seat: Seat): boolean {
-    return ((seat === 1 ? this.player1 : this.player2).data.protocol ?? 1) >= SERVER_PROTOCOL;
+    return ((seat === 1 ? this.player1 : this.player2).data.protocol ?? 1) >= 2;
+  }
+
+  /** Do BOTH clients speak protocol 3 (accept / decline, rooms, rematch, emotes)? */
+  get bothV3(): boolean {
+    return (this.player1.data.protocol ?? 1) >= SERVER_PROTOCOL && (this.player2.data.protocol ?? 1) >= SERVER_PROTOCOL;
+  }
+
+  /** Which side a socket plays (null: not in this match). */
+  sideOf(ws: WebSocket): 'left' | 'right' | null {
+    return ws === this.player1.ws ? 'left' : ws === this.player2.ws ? 'right' : null;
+  }
+
+  /** The two seats, left first. */
+  seats(): { ws: WebSocket; data: PlayerData }[] {
+    return [this.player1, this.player2];
+  }
+
+  /**
+   * Protocol 3: a player turned the match down before it started. The match
+   * is over before it began; returns the OTHER player (the lobby requeues
+   * them), or null if it had already started or ended.
+   */
+  decline(playerWs: WebSocket): WebSocket | null {
+    if (this.started || this.ended) return null;
+    const seat = this.seatOf(playerWs);
+    if (!seat) return null;
+    this.ended = true;
+    this.stopLoops();
+    return seat === 1 ? this.player2.ws : this.player1.ws;
   }
 
   private seatOf(ws: WebSocket): Seat | null {
@@ -160,9 +217,25 @@ export class GameSession {
    * players ready, or 30s in if one did. Never twice (see start()).
    */
   startBettingLobby() {
-    console.log('💰 Starting ready lobby (30 seconds)...');
     if (this.started || this.ended) return; // both readied before the lobby opened
 
+    if (this.bothV3 && this.options.acceptMs) {
+      // protocol 3: BOTH must accept in time, or nobody plays
+      this.bettingTimer = setTimeout(() => {
+        this.bettingTimer = null;
+        if (this.started || this.ended) return;
+        this.ended = true;
+        this.stopLoops();
+        const accepted: WebSocket[] = [];
+        const missing: WebSocket[] = [];
+        (this.player1Ready ? accepted : missing).push(this.player1.ws);
+        (this.player2Ready ? accepted : missing).push(this.player2.ws);
+        this.options.onUnaccepted?.(accepted, missing);
+      }, this.options.acceptMs);
+      return;
+    }
+
+    console.log('💰 Starting ready lobby (30 seconds)...');
     this.bettingTimer = setTimeout(() => {
       this.bettingTimer = null;
       if (this.started || this.ended) return;
@@ -533,7 +606,7 @@ export class GameSession {
     this.sendToPlayer(this.player2.ws, { type: 'powerups_refreshed' });
 
     const score = seat === 2 ? this.gameState.score2 : this.gameState.score1;
-    if (score >= GAME_CONFIG.WINNING_SCORE) {
+    if (score >= this.winScore) {
       this.endGame(seat === 2 ? 'right' : 'left');
       return;
     }
@@ -609,6 +682,7 @@ export class GameSession {
   private endGame(winner: 'left' | 'right') {
     console.log(`🏆 Game over! Winner: ${winner}`);
     this.ended = true;
+    this.completed = true;
     this.stopLoops();
     const message = {
       type: 'game_over' as const,
