@@ -289,6 +289,16 @@ export type SimEvent =
   | { type: "chaos"; kind: "time_warn"; left: number }
   | { type: "chaos"; kind: "kick"; x: number; y: number; kick: number; side: Side | null };
 
+/** The seven experiments; each has an ascended form (GOD_FORM). */
+export const EXPERIMENT_POOL: readonly ExperimentName[] = ["BLACK HOLE", "PORTALS", "MULTIBALL", "HYPERDRIVE", "GRAVITY STORM", "PINBALL", "TESLA GATE"];
+/** a match's first experiment is always one of these - the black hole, the signature, half the time */
+export const HEADLINERS: readonly ExperimentName[] = ["BLACK HOLE", "BLACK HOLE", "MULTIBALL", "PORTALS"];
+/** the first experiment, 10s of live play in (the first point stays pure pong) */
+export const EXP_FIRST = 600;
+/** ...then one every 14-19s */
+export const EXP_EVERY = 840;
+export const EXP_JITTER = 300;
+
 /** mulberry32 */
 export function rngFrom(seed: number): () => number {
   let a = seed >>> 0;
@@ -389,8 +399,10 @@ export class PongSim {
   /** Everything that pulls (or pushes) this tick: k > 0 pulls, k < 0 pushes. */
   private pullCache: { x: number; y: number; k: number; reach: number }[] = [];
   private orbTimer = 360;
-  private expTimer = 1200;
+  private expTimer = EXP_FIRST;
   private expCount = 0;
+  /** this match's experiments, dealt from a shuffled deck (see deal()) */
+  private expBag: ExperimentName[] = [];
   private overTicks = -1;
   private events: SimEvent[] = [];
   /** THE GAUNTLET: ticks until a boss's forever-experiment re-forms, and how often it has */
@@ -1149,10 +1161,33 @@ export class PongSim {
 
   private experiment(): void {
     const boss = this.rules.boss;
-    this.expTimer = boss?.expEvery ?? 1200 + Math.floor(this.rng() * 540);
-    const pool: ExperimentName[] = ["BLACK HOLE", "PORTALS", "MULTIBALL", "HYPERDRIVE", "GRAVITY STORM", "PINBALL", "TESLA GATE"];
-    const base = pool[Math.floor(this.rng() * pool.length)];
+    this.expTimer = boss?.expEvery ?? EXP_EVERY + Math.floor(this.rng() * EXP_JITTER);
+    if (!this.expBag.length) this.expBag = this.deal();
+    const base = this.expBag.pop()!;
     this.runExperiment(boss?.alwaysGod || this.godRoll() ? GOD_FORM[base] : base);
+  }
+
+  /**
+   * A match's experiments come from a shuffled deck, not a dice roll: no
+   * repeat until all seven have run, and the OPENER is always a headliner
+   * (a black hole half the time, else multiball or portals). Measured by
+   * scripts/health.ts: with
+   * a dice roll every 20-29s from 20s in, an online match (first to 5, about
+   * a minute of play) saw two experiments and 73% of them never a black hole.
+   */
+  private deal(): ExperimentName[] {
+    const bag = [...EXPERIMENT_POOL];
+    for (let i = bag.length - 1; i > 0; i--) {
+      const j = Math.floor(this.rng() * (i + 1));
+      [bag[i], bag[j]] = [bag[j], bag[i]];
+    }
+    if (this.expCount === 0) {
+      // the opener (dealt from the end) is a headliner
+      const h = HEADLINERS[Math.floor(this.rng() * HEADLINERS.length)];
+      bag.splice(bag.indexOf(h), 1);
+      bag.push(h);
+    }
+    return bag;
   }
 
   /** Start an experiment by name (public for tests and the dev harness). `quiet`: no announcement. */
