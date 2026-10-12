@@ -94,6 +94,7 @@ const GRACE = {
 const SAMPLE_MEMORY_MS = 600;
 
 export class GameSession {
+  readonly mode = 'classic' as const;
   private gameState: GameState;
   private player1: { ws: WebSocket; data: PlayerData };
   private player2: { ws: WebSocket; data: PlayerData };

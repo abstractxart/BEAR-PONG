@@ -10,7 +10,7 @@
  */
 import { WebSocketServer, WebSocket } from 'ws';
 import { cleanPlayer, Lobby } from './lobby.js';
-import { type ClientMessage, type PlayerData } from './types.js';
+import { gameMode, type ClientMessage, type PlayerData } from './types.js';
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 8080;
 /** a message bigger than this is not a pong message */
@@ -68,7 +68,7 @@ async function handleClientMessage(ws: WebSocket, message: ClientMessage) {
 
     case 'join_queue': {
       const data = await enrich(message.data);
-      if (ws.readyState === WebSocket.OPEN) lobby.joinQueue(ws, data);
+      if (ws.readyState === WebSocket.OPEN) lobby.joinQueue(ws, data, gameMode(message.mode));
       break;
     }
 
@@ -78,7 +78,7 @@ async function handleClientMessage(ws: WebSocket, message: ClientMessage) {
 
     case 'create_room': {
       const data = await enrich(message.data);
-      if (ws.readyState === WebSocket.OPEN) lobby.createRoom(ws, data, message.winScore);
+      if (ws.readyState === WebSocket.OPEN) lobby.createRoom(ws, data, message.winScore, gameMode(message.mode ?? 'chaos'));
       break;
     }
 

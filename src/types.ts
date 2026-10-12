@@ -37,6 +37,16 @@ export interface PlayerData {
 /** This server's protocol version, announced in match_found and welcome. */
 export const SERVER_PROTOCOL = 3;
 
+/**
+ * The two online games. CHAOS (protocol 3) is the main one: the Chaos Lab's
+ * simulation, black holes and all (ChaosSession). CLASSIC is pong as the
+ * live server always played it (GameSession) - and all an older client knows.
+ */
+export type GameMode = 'chaos' | 'classic';
+export function gameMode(raw: unknown): GameMode {
+  return raw === 'chaos' ? 'chaos' : 'classic';
+}
+
 /** Quick-chat emotes: the ids a client may send (the client owns the words). */
 export const EMOTE_COUNT = 8;
 
@@ -67,7 +77,7 @@ export type UltimateAbilityType = 'time_freeze' | 'paddle_dash' | 'power_hit';
 
 // Client -> Server messages
 export type ClientMessage =
-  | { type: 'join_queue'; data: PlayerData }
+  | { type: 'join_queue'; data: PlayerData; mode?: GameMode }
   | { type: 'paddle_move'; y: number; timestamp: number }
   | { type: 'set_bet'; amount: number }
   | { type: 'ready_to_start' }
@@ -80,7 +90,7 @@ export type ClientMessage =
   | { type: 'hello'; protocol?: number }
   | { type: 'leave_queue' }
   | { type: 'decline_match' }
-  | { type: 'create_room'; data: PlayerData; winScore?: number }
+  | { type: 'create_room'; data: PlayerData; winScore?: number; mode?: GameMode }
   | { type: 'join_room'; code: string; data: PlayerData }
   | { type: 'leave_room' }
   | { type: 'emote'; id: number };

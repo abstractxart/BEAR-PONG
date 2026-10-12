@@ -84,7 +84,7 @@ test("far-apart ratings wait for the window to widen, then meet", () => {
 
 test("the closest rating is chosen for the longest waiter", () => {
   const L = world();
-  const mk = (name, mmr, since) => { const ws = sock(); L.connect(ws); L.queue.push({ ws, data: player(name, { rank: { mmr, games: 30 } }), since, mmr }); return ws; };
+  const mk = (name, mmr, since) => { const ws = sock(); L.connect(ws); L.queue.push({ ws, data: player(name, { rank: { mmr, games: 30 } }), since, mmr, mode: "classic" }); return ws; };
   const a = mk("A", 500, clock - 5_000); // waited 5s: a window of 420
   const far = mk("FAR", 800, clock);
   const near = mk("NEAR", 540, clock);
@@ -277,6 +277,88 @@ test("a player's card is cleaned before a rival sees it", () => {
   assert.equal(p.rank.games, 0);
   assert.equal("junk" in p, false);
   assert.equal(normaliseCode(" ab-cd 9 "), "ABCD9");
+});
+
+test("CHAOS and CLASSIC have separate queues: players only meet their own game", () => {
+  const L = world();
+  const a = sock(); L.connect(a); L.joinQueue(a, player("A"), "chaos");
+  const b = sock(); L.connect(b); L.joinQueue(b, player("B"), "classic");
+  advance(60_000); L.tick();
+  assert.equal(of(a, "match_found").length + of(b, "match_found").length, 0, "never across games");
+  const c = sock(); L.connect(c); L.joinQueue(c, player("C"), "chaos");
+  const m = last(a, "match_found");
+  assert.equal(m.opponent.displayName, "C");
+  assert.equal(m.mode, "chaos");
+  assert.equal(m.winScore, 5, "chaos is first to 5");
+  assert.equal(L.sessionOf(a).mode, "chaos");
+});
+
+test("an older client asking for chaos gets classic (it cannot draw the lab)", () => {
+  const L = world();
+  const old = sock(); L.connect(old); L.joinQueue(old, player("OLD", { protocol: 2 }), "chaos");
+  const c = sock(); L.connect(c); L.joinQueue(c, player("C2"), "classic");
+  assert.equal(last(old, "match_found").mode, "classic");
+});
+
+test("switching game in the queue moves you, it does not duplicate you", () => {
+  const L = world();
+  const a = sock(); L.connect(a);
+  L.joinQueue(a, player("A"), "classic");
+  L.joinQueue(a, player("A"), "chaos");
+  assert.equal(L.queue.length, 1);
+  assert.equal(L.queue[0].mode, "chaos");
+});
+
+test("a chaos room is chaos; an older client cannot join it", () => {
+  const L = world();
+  const host = sock(); L.connect(host);
+  L.createRoom(host, player("HOST"), 3, "chaos");
+  const code = last(host, "room_created").code;
+  assert.equal(last(host, "room_created").mode, "chaos");
+  const old = sock(); L.connect(old);
+  L.joinRoom(old, code, player("OLD", { protocol: 2 }));
+  assert.equal(last(old, "room_error").reason, "update");
+  const friend = sock(); L.connect(friend);
+  L.joinRoom(friend, code, player("F"));
+  assert.equal(last(friend, "match_found").mode, "chaos");
+});
+
+test("a CHAOS match: both accept, the lab's snapshots stream, abilities are once a point, it ends", () => {
+  const L = world();
+  const a = sock(); L.connect(a); L.joinQueue(a, player("A"), "chaos");
+  const b = sock(); L.connect(b); L.joinQueue(b, player("B"), "chaos");
+  const s = L.sessionOf(a);
+  advance(1000);
+  L.accept(a); L.accept(b);
+  advance(4000); // the countdown, then play
+  assert.ok(of(a, "countdown").length >= 3, "the sim's own countdown");
+  const st = last(a, "game_state").state;
+  assert.ok(Array.isArray(st.balls) && st.balls.length >= 1, "lab snapshots: balls[]");
+  assert.equal(st.heightsAuthoritative, true);
+  s.handleUseUltimate(a, "power_hit");
+  s.handleUseUltimate(a, "power_hit");
+  advance(40); // events go out with the next tick
+  assert.ok(of(a, "ultimate_activated").length >= 1);
+  assert.equal(last(a, "error").message, "Ultimate already used!");
+  assert.equal(of(b, "error").length, 0);
+  for (let i = 0; i < 400 && !s.ended; i++) advance(1000);
+  assert.ok(s.ended && s.completed, "played to the end");
+  const over = last(a, "game_over");
+  assert.ok(over && Math.max(over.finalScore.left, over.finalScore.right) === 5);
+  assert.deepEqual(last(b, "game_over").finalScore, over.finalScore);
+});
+
+test("chaos sets each side's lag grace from their measured round trip", () => {
+  const L = world();
+  const a = sock(); L.connect(a); L.joinQueue(a, player("A"), "chaos");
+  const b = sock(); L.connect(b); L.joinQueue(b, player("B"), "chaos");
+  const s = L.sessionOf(a);
+  advance(1000); L.accept(a); L.accept(b);
+  advance(200);
+  s.handlePong(a, clock - 100); // a pong for a ping sent 100ms ago
+  advance(50);
+  assert.equal(s.sim.graceTicks.left, Math.ceil((100 + 45) / (1000 / 60)));
+  assert.equal(s.sim.graceTicks.right, Math.ceil(120 / (1000 / 60)), "no answer yet: the fallback");
 });
 
 console.log(`\n${passed} passed`);

@@ -8,6 +8,10 @@
  *                 deep in a solo mode when it is found). Whoever declines or
  *                 lets it time out leaves the queue; whoever accepted goes
  *                 straight back to the FRONT of it.
+ *   two games     CHAOS (the main one - the lab's black holes, multiball, orbs
+ *                 and god tier, ChaosSession) and CLASSIC (GameSession). Each
+ *                 has its own queue; a room is one or the other. Older clients
+ *                 only know classic.
  *   rooms         private matches: a 5-letter code (and share link) - the host
  *                 waits, a friend joins, the match starts. Unrated (no ladder).
  *   rematch       after a private match both press REMATCH: the same two again,
@@ -19,12 +23,18 @@
  * tick() twice a second, and the tests drive it with fake sockets and a clock.
  */
 import type { WebSocket } from 'ws';
+import { ChaosSession } from './ChaosSession.js';
 import { GameSession } from './GameSession.js';
-import { EMOTE_COUNT, GAME_CONFIG, SERVER_PROTOCOL, type PlayerData } from './types.js';
+import { EMOTE_COUNT, GAME_CONFIG, SERVER_PROTOCOL, type GameMode, type PlayerData } from './types.js';
 
 export interface Seat { ws: WebSocket; data: PlayerData }
-interface Queued extends Seat { since: number; mmr: number }
-interface Room { code: string; host: Seat; winScore: number; created: number }
+/** a match of either game */
+export type Match = GameSession | ChaosSession;
+interface Queued extends Seat { since: number; mmr: number; mode: GameMode }
+interface Room { code: string; host: Seat; winScore: number; created: number; mode: GameMode }
+
+/** first to: a chaos match is longer and wilder per point */
+export const DEFAULT_WIN: Record<GameMode, number> = { chaos: 5, classic: GAME_CONFIG.WINNING_SCORE };
 interface ClientInfo { protocol: number; joins: number[]; lastEmote: number }
 
 /** Room codes: no I, O, 0 or 1 - nothing to misread when a friend reads it out. */
@@ -90,10 +100,10 @@ export class Lobby {
   readonly queue: Queued[] = [];
   readonly rooms = new Map<string, Room>();
   private roomOf = new Map<WebSocket, string>();
-  private sessions = new Map<WebSocket, GameSession>();
+  private sessions = new Map<WebSocket, Match>();
   private clients = new Map<WebSocket, ClientInfo>();
-  private rematches = new Map<GameSession, { want: Set<WebSocket>; until: number }>();
-  private emotes = new WeakMap<GameSession, number>();
+  private rematches = new Map<Match, { want: Set<WebSocket>; until: number }>();
+  private emotes = new WeakMap<Match, number>();
   private lastStatus = '';
 
   constructor(private readonly d: LobbyDeps) {}
@@ -119,10 +129,11 @@ export class Lobby {
     this.send(ws, { type: 'welcome', serverVersion: SERVER_PROTOCOL, ...this.status() });
   }
 
-  status(): { online: number; searching: number; playing: number; rooms: number } {
-    const live = new Set<GameSession>();
+  status(): { online: number; searching: number; playing: number; rooms: number; chaos: number; classic: number } {
+    const live = new Set<Match>();
     this.sessions.forEach((s) => { if (!s.ended) live.add(s); });
-    return { online: this.clients.size, searching: this.queue.length, playing: live.size * 2, rooms: this.rooms.size };
+    const chaos = this.queue.filter((q) => q.mode === 'chaos').length;
+    return { online: this.clients.size, searching: this.queue.length, playing: live.size * 2, rooms: this.rooms.size, chaos, classic: this.queue.length - chaos };
   }
 
   private broadcastStatus(): void {
@@ -135,11 +146,11 @@ export class Lobby {
 
   // ------------------------------------------------------------ sessions
   /** the match this socket is in (live, or just finished) */
-  sessionOf(ws: WebSocket): GameSession | undefined {
+  sessionOf(ws: WebSocket): Match | undefined {
     return this.sessions.get(ws);
   }
 
-  private liveSession(ws: WebSocket): GameSession | undefined {
+  private liveSession(ws: WebSocket): Match | undefined {
     const s = this.sessions.get(ws);
     return s && !s.ended ? s : undefined;
   }
@@ -156,29 +167,30 @@ export class Lobby {
     }
   }
 
-  private startMatch(a: Seat, b: Seat, opts: { winScore: number; private: boolean; room?: string; rematch?: boolean }): GameSession {
+  private startMatch(a: Seat, b: Seat, opts: { winScore: number; private: boolean; room?: string; rematch?: boolean; mode: GameMode }): Match {
     this.detach(a.ws);
     this.detach(b.ws);
-    const session: GameSession = new GameSession(a, b, {
+    const sessionOptions = {
       winScore: opts.winScore,
       private: opts.private,
       room: opts.room,
       acceptMs: ACCEPT_MS,
-      onUnaccepted: (accepted, missing) => this.unaccepted(session, accepted, missing),
-    });
+      onUnaccepted: (accepted: WebSocket[], missing: WebSocket[]) => this.unaccepted(session, accepted, missing),
+    };
+    const session: Match = opts.mode === 'chaos' ? new ChaosSession(a, b, sessionOptions) : new GameSession(a, b, sessionOptions);
     this.sessions.set(a.ws, session);
     this.sessions.set(b.ws, session);
-    const extra = { serverVersion: SERVER_PROTOCOL, winScore: session.winScore, private: opts.private, room: opts.room ?? null, rematch: !!opts.rematch };
+    const extra = { serverVersion: SERVER_PROTOCOL, mode: opts.mode, winScore: session.winScore, private: opts.private, room: opts.room ?? null, rematch: !!opts.rematch };
     this.send(a.ws, { type: 'match_found', opponent: b.data, yourSide: 'left', ...extra });
     this.send(b.ws, { type: 'match_found', opponent: a.data, yourSide: 'right', ...extra });
-    console.log(`🎮 ${opts.private ? `Room ${opts.room}${opts.rematch ? ' rematch' : ''}` : 'Match'}: ${a.data.displayName} vs ${b.data.displayName} (first to ${session.winScore})`);
+    console.log(`🎮 ${opts.mode.toUpperCase()} ${opts.private ? `room ${opts.room}${opts.rematch ? ' rematch' : ''}` : 'match'}: ${a.data.displayName} vs ${b.data.displayName} (first to ${session.winScore})`);
     this.later(() => session.startBettingLobby(), LOBBY_DELAY_MS);
     this.broadcastStatus();
     return session;
   }
 
   /** Protocol 3: the accept window closed without both accepting. */
-  private unaccepted(session: GameSession, accepted: WebSocket[], missing: WebSocket[]): void {
+  private unaccepted(session: Match, accepted: WebSocket[], missing: WebSocket[]): void {
     for (const ws of missing) {
       if (this.sessions.get(ws) === session) this.sessions.delete(ws);
       this.send(ws, { type: 'match_declined', you: true, requeued: false });
@@ -191,7 +203,7 @@ export class Lobby {
   }
 
   /** The rival turned it down: a ranked player goes straight back to the front of the queue. */
-  private backToFront(ws: WebSocket, session: GameSession): void {
+  private backToFront(ws: WebSocket, session: Match): void {
     const seat = session.seats().find((s) => s.ws === ws);
     if (!seat || !this.d.open(ws)) return;
     if ((seat.data.protocol ?? 1) < SERVER_PROTOCOL) {
@@ -204,21 +216,27 @@ export class Lobby {
       return;
     }
     // a minute of credit: first in line, and a wide skill window
-    this.queue.unshift({ ...seat, since: this.now() - 60_000, mmr: seat.data.rank?.mmr ?? DEFAULT_MMR });
+    this.queue.unshift({ ...seat, since: this.now() - 60_000, mmr: seat.data.rank?.mmr ?? DEFAULT_MMR, mode: session.mode });
     this.send(ws, { type: 'match_declined', you: false, requeued: true });
     this.send(ws, { type: 'queue_joined', position: 1 });
   }
 
   // ------------------------------------------------------------ the queue
-  joinQueue(ws: WebSocket, data: PlayerData): void {
-    if (this.queue.some((p) => p.ws === ws)) return;
+  joinQueue(ws: WebSocket, data: PlayerData, mode: GameMode = 'classic'): void {
+    // chaos needs a protocol 3 client (accept, the lab's snapshots)
+    if ((data.protocol ?? 1) < SERVER_PROTOCOL) mode = 'classic';
+    const queued = this.queue.find((p) => p.ws === ws);
+    if (queued) {
+      if (queued.mode === mode) return;
+      this.queue.splice(this.queue.indexOf(queued), 1); // switching games: same socket, the other queue
+    }
     this.detach(ws);
     if (this.liveSession(ws)) {
       this.send(ws, { type: 'error', message: 'Already in a match' });
       return;
     }
     this.leaveRoom(ws);
-    this.queue.push({ ws, data, since: this.now(), mmr: data.rank?.mmr ?? DEFAULT_MMR });
+    this.queue.push({ ws, data, since: this.now(), mmr: data.rank?.mmr ?? DEFAULT_MMR, mode });
     this.send(ws, { type: 'queue_joined', position: this.queue.length });
     this.pair();
     this.broadcastStatus();
@@ -244,7 +262,7 @@ export class Lobby {
         const win = mmrWindow(t - a.since);
         let best: Queued | null = null;
         for (const b of order) {
-          if (b === a) continue;
+          if (b === a || b.mode !== a.mode) continue;
           if (a.data.wallet === b.data.wallet && !a.data.wallet.startsWith('guest_')) continue;
           const gap = Math.abs(a.mmr - b.mmr);
           if (gap > Math.max(win, mmrWindow(t - b.since))) continue;
@@ -253,7 +271,7 @@ export class Lobby {
         if (best) {
           this.queue.splice(this.queue.indexOf(a), 1);
           this.queue.splice(this.queue.indexOf(best), 1);
-          this.startMatch(a, best, { winScore: GAME_CONFIG.WINNING_SCORE, private: false });
+          this.startMatch(a, best, { winScore: DEFAULT_WIN[a.mode], private: false, mode: a.mode });
           made = true;
           break;
         }
@@ -290,7 +308,7 @@ export class Lobby {
     throw new Error('room codes exhausted');
   }
 
-  createRoom(ws: WebSocket, data: PlayerData, winScore: unknown): void {
+  createRoom(ws: WebSocket, data: PlayerData, winScore: unknown, rawMode: GameMode = 'chaos'): void {
     this.detach(ws);
     if (this.liveSession(ws)) {
       this.send(ws, { type: 'room_error', reason: 'busy' });
@@ -299,10 +317,11 @@ export class Lobby {
     this.leaveQueue(ws);
     this.leaveRoom(ws);
     const ws_ = Number(winScore);
-    const room: Room = { code: this.newCode(), host: { ws, data }, winScore: WIN_SCORES.includes(ws_) ? ws_ : GAME_CONFIG.WINNING_SCORE, created: this.now() };
+    const mode: GameMode = (data.protocol ?? 1) >= SERVER_PROTOCOL ? rawMode : 'classic';
+    const room: Room = { code: this.newCode(), host: { ws, data }, winScore: WIN_SCORES.includes(ws_) ? ws_ : DEFAULT_WIN[mode], created: this.now(), mode };
     this.rooms.set(room.code, room);
     this.roomOf.set(ws, room.code);
-    this.send(ws, { type: 'room_created', code: room.code, winScore: room.winScore });
+    this.send(ws, { type: 'room_created', code: room.code, winScore: room.winScore, mode });
     this.broadcastStatus();
   }
 
@@ -333,8 +352,12 @@ export class Lobby {
     }
     this.leaveQueue(ws);
     this.leaveRoom(ws);
+    if (room.mode === 'chaos' && (data.protocol ?? 1) < SERVER_PROTOCOL) {
+      this.send(ws, { type: 'room_error', reason: 'update', code });
+      return;
+    }
     this.closeRoom(code);
-    this.startMatch(room.host, { ws, data }, { winScore: room.winScore, private: true, room: code });
+    this.startMatch(room.host, { ws, data }, { winScore: room.winScore, private: true, room: code, mode: room.mode });
   }
 
   private closeRoom(code: string): void {
@@ -370,7 +393,7 @@ export class Lobby {
     this.sessions.delete(left.ws);
     this.sessions.delete(right.ws);
     // sides swap: nobody keeps the better end of the court
-    this.startMatch(right, left, { winScore: s.winScore, private: true, room: s.options.room, rematch: true });
+    this.startMatch(right, left, { winScore: s.winScore, private: true, room: s.options.room, rematch: true, mode: s.mode });
   }
 
   // ------------------------------------------------------------ emotes
